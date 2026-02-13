@@ -1,0 +1,25 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.75"
+repository = "https://github.com/TODO/boba"
+homepage = "https://github.com/TODO/boba"
+keywords = ["tui", "terminal", "ratatui", "elm-architecture", "bubble-tea"]
+categories = ["command-line-interface"]
+
+[workspace.dependencies]
+boba = { path = "crates/boba" }
+boba-core = { path = "crates/boba-core" }
+boba-widgets = { path = "crates/boba-widgets" }
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+tokio-stream = "0.1"
+thiserror = "2"
+libc = "0.2"

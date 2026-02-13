@@ -1,0 +1,20 @@
+[package]
+name = "boba-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Core runtime for boba — a Bubble Tea-inspired TUI framework for ratatui"
+
+[dependencies]
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+tokio-stream = { workspace = true }
+thiserror = { workspace = true }
+libc = { workspace = true }

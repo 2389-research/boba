@@ -1,0 +1,38 @@
+[package]
+name = "boba"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "A Bubble Tea-inspired TUI framework for ratatui"
+
+[dependencies]
+boba-core = { workspace = true }
+boba-widgets = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tokio = { workspace = true }
+
+[[example]]
+name = "counter"
+path = "../../examples/counter.rs"
+
+[[example]]
+name = "input_form"
+path = "../../examples/input_form.rs"
+
+[[example]]
+name = "async_http"
+path = "../../examples/async_http.rs"
+
+[[example]]
+name = "full_app"
+path = "../../examples/full_app.rs"
+
+[[example]]
+name = "file_browser"
+path = "../../examples/file_browser.rs"
