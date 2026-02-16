@@ -61,6 +61,7 @@ pub struct TextArea {
     redo_stack: VecDeque<UndoEntry>,
     soft_wrap: bool,
     line_prompt: Option<String>,
+    history: Option<boba_core::input_history::InputHistory>,
 }
 
 /// Style configuration for the text area.
@@ -110,15 +111,13 @@ impl TextArea {
             redo_stack: VecDeque::new(),
             soft_wrap: false,
             line_prompt: None,
+            history: None,
         }
     }
 
     /// Initialize with the given text content.
     pub fn with_content(mut self, content: &str) -> Self {
-        self.lines = content
-            .lines()
-            .map(|l| l.chars().collect())
-            .collect();
+        self.lines = content.lines().map(|l| l.chars().collect()).collect();
         if self.lines.is_empty() {
             self.lines.push(Vec::new());
         }
@@ -159,6 +158,31 @@ impl TextArea {
         self
     }
 
+    /// Enable input history with the given maximum number of entries.
+    ///
+    /// When enabled and the buffer is a single line, Up/Down keys browse
+    /// through previously submitted inputs (shell-like behavior). When
+    /// the buffer has multiple lines, Up/Down move the cursor normally.
+    pub fn with_history(mut self, max_entries: usize) -> Self {
+        self.history = Some(boba_core::input_history::InputHistory::new(max_entries));
+        self
+    }
+
+    /// Push a value into the input history.
+    ///
+    /// Typically called after the user submits input. Empty strings
+    /// and consecutive duplicates are ignored.
+    pub fn push_history(&mut self, entry: impl Into<String>) {
+        if let Some(ref mut history) = self.history {
+            history.push(entry);
+        }
+    }
+
+    /// Get a reference to the input history, if enabled.
+    pub fn history(&self) -> Option<&boba_core::input_history::InputHistory> {
+        self.history.as_ref()
+    }
+
     /// Give this editor keyboard focus.
     pub fn focus(&mut self) {
         self.focus = true;
@@ -180,10 +204,7 @@ impl TextArea {
 
     /// Programmatically set content, resetting the cursor to 0,0.
     pub fn set_value(&mut self, content: &str) {
-        self.lines = content
-            .lines()
-            .map(|l| l.chars().collect())
-            .collect();
+        self.lines = content.lines().map(|l| l.chars().collect()).collect();
         if self.lines.is_empty() {
             self.lines.push(Vec::new());
         }
@@ -585,8 +606,7 @@ impl Component for TextArea {
                 if let Some(limit) = self.char_limit {
                     let available = limit.saturating_sub(self.total_chars());
                     let chars: Vec<char> = text.chars().collect();
-                    let to_insert: String =
-                        chars.into_iter().take(available).collect();
+                    let to_insert: String = chars.into_iter().take(available).collect();
                     self.insert_string(&to_insert);
                 } else {
                     self.insert_string(&text);
@@ -717,8 +737,7 @@ impl Component for TextArea {
                         Command::message(Message::Changed(self.value()))
                     }
                     // Ctrl+Left / Alt+Left: move to previous word boundary
-                    (KeyCode::Left, KeyModifiers::CONTROL)
-                    | (KeyCode::Left, KeyModifiers::ALT) => {
+                    (KeyCode::Left, KeyModifiers::CONTROL) | (KeyCode::Left, KeyModifiers::ALT) => {
                         self.clear_selection();
                         self.cursor_col = self.prev_word_boundary();
                         Command::none()
@@ -881,7 +900,26 @@ impl Component for TextArea {
                         }
                         Command::none()
                     }
-                    (KeyCode::Up, _) => {
+                    (KeyCode::Up, _) if !shift => {
+                        // History browsing: when buffer is a single line and
+                        // cursor is on the first row, browse history instead
+                        // of moving the cursor.
+                        if self.lines.len() == 1 && self.cursor_row == 0 && self.history.is_some() {
+                            let current = self.value();
+                            let entry = self
+                                .history
+                                .as_mut()
+                                .unwrap()
+                                .older(&current)
+                                .map(|s| s.to_owned());
+                            if let Some(entry) = entry {
+                                self.lines = vec![entry.chars().collect()];
+                                self.cursor_row = 0;
+                                self.cursor_col = self.lines[0].len();
+                                self.selection_start = None;
+                                return Command::message(Message::Changed(self.value()));
+                            }
+                        }
                         self.clear_selection();
                         if self.cursor_row > 0 {
                             self.cursor_row -= 1;
@@ -889,7 +927,20 @@ impl Component for TextArea {
                         }
                         Command::none()
                     }
-                    (KeyCode::Down, _) => {
+                    (KeyCode::Down, _) if !shift => {
+                        // History browsing: when buffer is a single line and
+                        // cursor is on the last row, browse history instead.
+                        if self.lines.len() == 1 && self.cursor_row == 0 {
+                            if let Some(ref mut history) = self.history {
+                                if let Some(entry) = history.newer().map(|s| s.to_owned()) {
+                                    self.lines = vec![entry.chars().collect()];
+                                    self.cursor_row = 0;
+                                    self.cursor_col = self.lines[0].len();
+                                    self.selection_start = None;
+                                    return Command::message(Message::Changed(self.value()));
+                                }
+                            }
+                        }
                         self.clear_selection();
                         if self.cursor_row < self.lines.len() - 1 {
                             self.cursor_row += 1;
@@ -946,11 +997,7 @@ impl Component for TextArea {
             0
         };
 
-        let prompt_width = self
-            .line_prompt
-            .as_ref()
-            .map(|p| p.len())
-            .unwrap_or(0);
+        let prompt_width = self.line_prompt.as_ref().map(|p| p.len()).unwrap_or(0);
 
         let has_sel = self.has_selection();
 
@@ -1000,10 +1047,7 @@ impl Component for TextArea {
 
                         if is_cursor {
                             // Render cursor character
-                            spans.push(Span::styled(
-                                line_chars[i].to_string(),
-                                self.style.cursor,
-                            ));
+                            spans.push(Span::styled(line_chars[i].to_string(), self.style.cursor));
                             i += 1;
                         } else {
                             // Collect a run of characters that share the same
@@ -1020,8 +1064,7 @@ impl Component for TextArea {
                             {
                                 i += 1;
                             }
-                            let chunk: String =
-                                line_chars[start..i].iter().collect();
+                            let chunk: String = line_chars[start..i].iter().collect();
                             if !chunk.is_empty() {
                                 spans.push(Span::styled(chunk, style));
                             }
@@ -1275,7 +1318,10 @@ mod tests {
         let cmd = send_key(&mut ta, KeyCode::Char('c'), KeyModifiers::CONTROL);
         match extract_message(cmd) {
             Some(Message::Copy(text)) => assert_eq!(text, "hello"),
-            other => panic!("Expected Copy message, got {:?}", other.map(|m| format!("{:?}", m))),
+            other => panic!(
+                "Expected Copy message, got {:?}",
+                other.map(|m| format!("{:?}", m))
+            ),
         }
         // Selection should still be there (copy doesn't remove)
         assert!(ta.has_selection());
@@ -1320,7 +1366,10 @@ mod tests {
         assert_eq!(ta.line_count(), 2);
         match cmd.into_message() {
             Some(Message::Changed(_)) => {}
-            other => panic!("Expected Changed message, got {:?}", other.map(|m| format!("{:?}", m))),
+            other => panic!(
+                "Expected Changed message, got {:?}",
+                other.map(|m| format!("{:?}", m))
+            ),
         }
     }
 
@@ -1397,5 +1446,62 @@ mod tests {
         assert_eq!(ta.value(), "world");
         send_key(&mut ta, KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(ta.value(), "hello world");
+    }
+
+    #[test]
+    fn test_history_browse_single_line() {
+        let mut ta = TextArea::new().with_history(100);
+        ta.focus();
+        ta.push_history("first");
+        ta.push_history("second");
+
+        // Type draft
+        send_key(&mut ta, KeyCode::Char('d'), KeyModifiers::NONE);
+        assert_eq!(ta.value(), "d");
+
+        // Up → most recent
+        send_key(&mut ta, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "second");
+
+        // Up → older
+        send_key(&mut ta, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "first");
+
+        // Down → newer
+        send_key(&mut ta, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "second");
+
+        // Down → back to draft
+        send_key(&mut ta, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "d");
+    }
+
+    #[test]
+    fn test_history_does_not_activate_on_multiline() {
+        let mut ta = TextArea::new()
+            .with_history(100)
+            .with_content("line1\nline2");
+        ta.focus();
+        ta.push_history("old");
+
+        // Buffer has 2 lines; Up should move cursor, not browse history
+        ta.cursor_row = 1;
+        ta.cursor_col = 0;
+        send_key(&mut ta, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(ta.cursor_row(), 0);
+        // Value unchanged (not history entry)
+        assert_eq!(ta.value(), "line1\nline2");
+    }
+
+    #[test]
+    fn test_history_cursor_at_end_after_browse() {
+        let mut ta = TextArea::new().with_history(100);
+        ta.focus();
+        ta.push_history("hello world");
+
+        send_key(&mut ta, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "hello world");
+        assert_eq!(ta.cursor_col(), 11);
+        assert_eq!(ta.cursor_row(), 0);
     }
 }

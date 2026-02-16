@@ -171,11 +171,13 @@ impl FilePicker {
     ///
     /// Directory reading via `std::fs::read_dir` is fast enough to perform
     /// inline in an async block without needing `spawn_blocking`.
-    fn load_files_command(dir: PathBuf, show_hidden: bool, extensions: Vec<String>) -> Command<Message> {
+    fn load_files_command(
+        dir: PathBuf,
+        show_hidden: bool,
+        extensions: Vec<String>,
+    ) -> Command<Message> {
         Command::perform(
-            async move {
-                read_directory(&dir, show_hidden, &extensions)
-            },
+            async move { read_directory(&dir, show_hidden, &extensions) },
             Message::FilesLoaded,
         )
     }
@@ -206,10 +208,7 @@ fn read_directory(dir: &Path, show_hidden: bool, allowed_extensions: &[String]) 
 
             // Filter by extension (only applies to files)
             if !is_dir && !allowed_extensions.is_empty() {
-                let ext = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("");
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                 if !allowed_extensions.iter().any(|a| a == ext) {
                     return None;
                 }
@@ -418,7 +417,11 @@ impl Component for FilePicker {
             let is_selected = i == self.cursor;
 
             // Icon
-            let icon = if entry.is_dir { "\u{1F4C1} " } else { "\u{1F4C4} " };
+            let icon = if entry.is_dir {
+                "\u{1F4C1} "
+            } else {
+                "\u{1F4C4} "
+            };
 
             let mut spans = Vec::new();
             spans.push(Span::raw(icon));

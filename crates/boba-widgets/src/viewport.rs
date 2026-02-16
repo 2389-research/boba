@@ -5,11 +5,13 @@ use std::cell::Cell;
 
 use boba_core::command::Command;
 use boba_core::component::Component;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{
+    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 use ratatui::Frame;
 
 use crate::runeutil;
@@ -47,6 +49,86 @@ pub enum Message {
     HalfViewDown,
 }
 
+/// Configurable key bindings for the viewport component.
+pub struct ViewportKeyBindings {
+    /// Scroll up one line. Default: Up, k
+    pub up: crate::key::Binding,
+    /// Scroll down one line. Default: Down, j
+    pub down: crate::key::Binding,
+    /// Scroll left. Default: Left, h
+    pub left: crate::key::Binding,
+    /// Scroll right. Default: Right, l
+    pub right: crate::key::Binding,
+    /// Scroll to top. Default: Home
+    pub first: crate::key::Binding,
+    /// Scroll to bottom. Default: End, G
+    pub last: crate::key::Binding,
+    /// Page up. Default: PageUp
+    pub page_up: crate::key::Binding,
+    /// Page down. Default: PageDown
+    pub page_down: crate::key::Binding,
+}
+
+impl Default for ViewportKeyBindings {
+    fn default() -> Self {
+        use crate::key::{Binding, KeyCombination};
+        Self {
+            up: Binding::with_keys(
+                vec![
+                    KeyCombination::new(KeyCode::Up),
+                    KeyCombination::new(KeyCode::Char('k')),
+                ],
+                "Up",
+            ),
+            down: Binding::with_keys(
+                vec![
+                    KeyCombination::new(KeyCode::Down),
+                    KeyCombination::new(KeyCode::Char('j')),
+                ],
+                "Down",
+            ),
+            left: Binding::with_keys(
+                vec![
+                    KeyCombination::new(KeyCode::Left),
+                    KeyCombination::new(KeyCode::Char('h')),
+                ],
+                "Left",
+            ),
+            right: Binding::with_keys(
+                vec![
+                    KeyCombination::new(KeyCode::Right),
+                    KeyCombination::new(KeyCode::Char('l')),
+                ],
+                "Right",
+            ),
+            first: Binding::new(KeyCombination::new(KeyCode::Home), "Top"),
+            last: Binding::with_keys(
+                vec![
+                    KeyCombination::new(KeyCode::End),
+                    KeyCombination::new(KeyCode::Char('G')),
+                    KeyCombination::shift(KeyCode::Char('G')),
+                ],
+                "Bottom",
+            ),
+            page_up: Binding::new(KeyCombination::new(KeyCode::PageUp), "Page up"),
+            page_down: Binding::new(KeyCombination::new(KeyCode::PageDown), "Page down"),
+        }
+    }
+}
+
+impl crate::key::KeyMap for ViewportKeyBindings {
+    fn short_help(&self) -> Vec<&crate::key::Binding> {
+        vec![&self.up, &self.down, &self.first, &self.last]
+    }
+
+    fn full_help(&self) -> Vec<Vec<&crate::key::Binding>> {
+        vec![
+            vec![&self.up, &self.down, &self.left, &self.right],
+            vec![&self.first, &self.last, &self.page_up, &self.page_down],
+        ]
+    }
+}
+
 /// A scrollable content area with vertical and horizontal scrolling.
 ///
 /// Supports plain text, pre-styled lines, and content with ANSI escape
@@ -73,6 +155,8 @@ pub struct Viewport {
     mouse_wheel_delta: u16,
     /// Updated during each `view()` call via interior mutability.
     visible_height: Cell<u16>,
+    key_seq: boba_core::key_sequence::KeySequenceTracker,
+    key_bindings: ViewportKeyBindings,
 }
 
 /// Style configuration for the viewport.
@@ -109,7 +193,20 @@ impl Viewport {
             mouse_wheel_enabled: true,
             mouse_wheel_delta: 3,
             visible_height: Cell::new(24),
+            key_seq: boba_core::key_sequence::KeySequenceTracker::new(),
+            key_bindings: ViewportKeyBindings::default(),
         }
+    }
+
+    /// Set custom key bindings for the viewport.
+    pub fn with_key_bindings(mut self, bindings: ViewportKeyBindings) -> Self {
+        self.key_bindings = bindings;
+        self
+    }
+
+    /// Get a reference to the current key bindings.
+    pub fn key_bindings(&self) -> &ViewportKeyBindings {
+        &self.key_bindings
     }
 
     /// Replace the content with new plain text, resetting scroll offsets.
@@ -248,7 +345,11 @@ impl Viewport {
         } else {
             self.content.lines().count()
         };
-        if count > u16::MAX as usize { u16::MAX } else { count as u16 }
+        if count > u16::MAX as usize {
+            u16::MAX
+        } else {
+            count as u16
+        }
     }
 
     fn max_offset(&self, visible_height: u16) -> u16 {
@@ -261,43 +362,50 @@ impl Component for Viewport {
 
     fn update(&mut self, msg: Message) -> Command<Message> {
         match msg {
-            Message::KeyPress(key) if self.focus => match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
+            Message::KeyPress(key) if self.focus => {
+                // Check for gg sequence (vim go-to-top)
+                if key.code == KeyCode::Char('g') && key.modifiers == KeyModifiers::NONE {
+                    if let Some(KeyCode::Char('g')) =
+                        self.key_seq.completes_sequence(KeyCode::Char('g'))
+                    {
+                        self.offset = 0;
+                        return Command::none();
+                    } else {
+                        self.key_seq.set_pending(KeyCode::Char('g'));
+                        return Command::none();
+                    }
+                }
+                self.key_seq.clear();
+                if self.key_bindings.up.matches(&key) {
                     self.offset = self.offset.saturating_sub(1);
                     Command::none()
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
+                } else if self.key_bindings.down.matches(&key) {
                     self.offset = self.offset.saturating_add(1);
                     Command::none()
-                }
-                KeyCode::Left | KeyCode::Char('h') => {
+                } else if self.key_bindings.left.matches(&key) {
                     self.h_offset = self.h_offset.saturating_sub(1);
                     Command::none()
-                }
-                KeyCode::Right | KeyCode::Char('l') => {
+                } else if self.key_bindings.right.matches(&key) {
                     self.h_offset = self.h_offset.saturating_add(1);
                     Command::none()
-                }
-                KeyCode::PageUp => {
+                } else if self.key_bindings.page_up.matches(&key) {
                     let vh = self.visible_height.get();
                     self.offset = self.offset.saturating_sub(vh);
                     Command::none()
-                }
-                KeyCode::PageDown => {
+                } else if self.key_bindings.page_down.matches(&key) {
                     let vh = self.visible_height.get();
                     self.offset = self.offset.saturating_add(vh);
                     Command::none()
-                }
-                KeyCode::Home | KeyCode::Char('g') => {
+                } else if self.key_bindings.first.matches(&key) {
                     self.offset = 0;
                     Command::none()
-                }
-                KeyCode::End | KeyCode::Char('G') => {
+                } else if self.key_bindings.last.matches(&key) {
                     self.offset = u16::MAX; // Will be clamped in view
                     Command::none()
+                } else {
+                    Command::none()
                 }
-                _ => Command::none(),
-            },
+            }
             Message::ScrollUp(n) => {
                 self.offset = self.offset.saturating_sub(n);
                 Command::none()

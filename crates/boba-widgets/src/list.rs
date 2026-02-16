@@ -3,12 +3,17 @@
 
 use boba_core::command::Command;
 use boba_core::component::Component;
+use boba_core::key_sequence::KeySequenceTracker;
 use boba_core::subscription::Subscription;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+use crate::key::Binding;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, HighlightSpacing, List as RatatuiList, ListItem, ListState, Paragraph};
+use ratatui::widgets::{
+    Block, Borders, HighlightSpacing, List as RatatuiList, ListItem, ListState, Paragraph,
+};
 use ratatui::Frame;
 use std::cell::Cell;
 
@@ -65,7 +70,13 @@ pub trait ItemDelegate: Send {
     /// - `index`: original index in the items list
     /// - `selected`: whether this item is currently selected
     /// - `width`: available width in columns
-    fn render<'a>(&'a self, item: &'a Item, index: usize, selected: bool, width: u16) -> Vec<Line<'a>>;
+    fn render<'a>(
+        &'a self,
+        item: &'a Item,
+        index: usize,
+        selected: bool,
+        width: u16,
+    ) -> Vec<Line<'a>>;
 }
 
 /// Default delegate that renders items as plain text.
@@ -73,7 +84,13 @@ pub trait ItemDelegate: Send {
 pub struct DefaultDelegate;
 
 impl ItemDelegate for DefaultDelegate {
-    fn render<'a>(&'a self, item: &'a Item, _index: usize, _selected: bool, _width: u16) -> Vec<Line<'a>> {
+    fn render<'a>(
+        &'a self,
+        item: &'a Item,
+        _index: usize,
+        _selected: bool,
+        _width: u16,
+    ) -> Vec<Line<'a>> {
         let mut lines = vec![Line::raw(&item.name)];
         if let Some(ref desc) = item.description {
             lines.push(Line::styled(
@@ -100,6 +117,99 @@ pub enum Message {
     ToggleFilter,
     /// Internal tick used to advance the loading spinner animation.
     SpinnerTick,
+}
+
+/// Configurable key bindings for the list component.
+///
+/// Each field is a [`Binding`](crate::key::Binding) that maps one or more
+/// key combinations to an action. The defaults match vim-style navigation.
+/// Override individual fields to customise keys:
+///
+/// ```ignore
+/// use boba_widgets::list::ListKeyBindings;
+/// use boba_widgets::key::{Binding, KeyCombination};
+/// use crossterm::event::KeyCode;
+///
+/// let mut bindings = ListKeyBindings::default();
+/// bindings.confirm = Binding::new(KeyCombination::new(KeyCode::Char(' ')), "Confirm");
+/// ```
+pub struct ListKeyBindings {
+    /// Move selection up. Default: Up, k
+    pub up: Binding,
+    /// Move selection down. Default: Down, j
+    pub down: Binding,
+    /// Move to first item. Default: Home
+    pub first: Binding,
+    /// Move to last item. Default: End, G
+    pub last: Binding,
+    /// Page down. Default: PageDown
+    pub page_down: Binding,
+    /// Page up. Default: PageUp
+    pub page_up: Binding,
+    /// Half page down. Default: Ctrl+D
+    pub half_down: Binding,
+    /// Half page up. Default: Ctrl+U
+    pub half_up: Binding,
+    /// Confirm selection. Default: Enter
+    pub confirm: Binding,
+    /// Toggle filter. Default: /
+    pub filter: Binding,
+}
+
+impl Default for ListKeyBindings {
+    fn default() -> Self {
+        use crate::key::{Binding, KeyCombination};
+        Self {
+            up: Binding::with_keys(
+                vec![
+                    KeyCombination::new(KeyCode::Up),
+                    KeyCombination::new(KeyCode::Char('k')),
+                ],
+                "Up",
+            ),
+            down: Binding::with_keys(
+                vec![
+                    KeyCombination::new(KeyCode::Down),
+                    KeyCombination::new(KeyCode::Char('j')),
+                ],
+                "Down",
+            ),
+            first: Binding::new(KeyCombination::new(KeyCode::Home), "First"),
+            last: Binding::with_keys(
+                vec![
+                    KeyCombination::new(KeyCode::End),
+                    KeyCombination::new(KeyCode::Char('G')),
+                    KeyCombination::shift(KeyCode::Char('G')),
+                ],
+                "Last",
+            ),
+            page_down: Binding::new(KeyCombination::new(KeyCode::PageDown), "Page down"),
+            page_up: Binding::new(KeyCombination::new(KeyCode::PageUp), "Page up"),
+            half_down: Binding::new(KeyCombination::ctrl(KeyCode::Char('d')), "Half page down"),
+            half_up: Binding::new(KeyCombination::ctrl(KeyCode::Char('u')), "Half page up"),
+            confirm: Binding::new(KeyCombination::new(KeyCode::Enter), "Confirm"),
+            filter: Binding::new(KeyCombination::new(KeyCode::Char('/')), "Filter"),
+        }
+    }
+}
+
+impl crate::key::KeyMap for ListKeyBindings {
+    fn short_help(&self) -> Vec<&Binding> {
+        vec![&self.up, &self.down, &self.confirm, &self.filter]
+    }
+
+    fn full_help(&self) -> Vec<Vec<&Binding>> {
+        vec![
+            vec![&self.up, &self.down, &self.first, &self.last],
+            vec![
+                &self.page_up,
+                &self.page_down,
+                &self.half_up,
+                &self.half_down,
+            ],
+            vec![&self.confirm, &self.filter],
+        ]
+    }
 }
 
 /// A selectable list with vim-style navigation, filtering, and custom rendering.
@@ -133,6 +243,8 @@ pub struct List {
     delegate: Box<dyn ItemDelegate>,
     loading: bool,
     spinner: Option<crate::spinner::Spinner>,
+    key_seq: KeySequenceTracker,
+    key_bindings: ListKeyBindings,
 }
 
 /// Style configuration for the list.
@@ -188,6 +300,8 @@ impl List {
             delegate: Box::new(DefaultDelegate),
             loading: false,
             spinner: None,
+            key_seq: KeySequenceTracker::new(),
+            key_bindings: ListKeyBindings::default(),
         }
     }
 
@@ -211,13 +325,22 @@ impl List {
 
     /// Set the loading state. When loading is true and a spinner is present,
     /// the spinner is rendered at the top of the list area.
+    /// Set custom key bindings for the list.
+    pub fn with_key_bindings(mut self, bindings: ListKeyBindings) -> Self {
+        self.key_bindings = bindings;
+        self
+    }
+
+    /// Get a reference to the current key bindings.
+    pub fn key_bindings(&self) -> &ListKeyBindings {
+        &self.key_bindings
+    }
+
     pub fn with_loading(mut self, loading: bool) -> Self {
         self.loading = loading;
         if loading && self.spinner.is_none() {
-            self.spinner = Some(
-                crate::spinner::Spinner::new("list-spinner")
-                    .with_title("Loading..."),
-            );
+            self.spinner =
+                Some(crate::spinner::Spinner::new("list-spinner").with_title("Loading..."));
         }
         self
     }
@@ -226,10 +349,8 @@ impl List {
     pub fn set_loading(&mut self, loading: bool) {
         self.loading = loading;
         if loading && self.spinner.is_none() {
-            self.spinner = Some(
-                crate::spinner::Spinner::new("list-spinner")
-                    .with_title("Loading..."),
-            );
+            self.spinner =
+                Some(crate::spinner::Spinner::new("list-spinner").with_title("Loading..."));
         }
     }
 
@@ -245,9 +366,9 @@ impl List {
 
     /// Returns the selected index in the original (unfiltered) items list.
     pub fn selected(&self) -> Option<usize> {
-        self.state.selected().and_then(|i| {
-            self.filtered_indices.get(i).copied()
-        })
+        self.state
+            .selected()
+            .and_then(|i| self.filtered_indices.get(i).copied())
     }
 
     /// Return the name of the currently selected item, if any.
@@ -402,7 +523,11 @@ impl List {
             return;
         }
         let i = self.state.selected().unwrap_or(0);
-        let next = if i + 1 >= self.filtered_indices.len() { 0 } else { i + 1 };
+        let next = if i + 1 >= self.filtered_indices.len() {
+            0
+        } else {
+            i + 1
+        };
         self.state.select(Some(next));
     }
 
@@ -531,75 +656,84 @@ impl Component for List {
                     _ => Command::none(),
                 }
             }
-            Message::KeyPress(key) if self.focus => match (key.code, key.modifiers) {
-                (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+            Message::KeyPress(key) if self.focus => {
+                // Check for gg sequence (vim go-to-first)
+                if key.code == KeyCode::Char('g') && key.modifiers == KeyModifiers::NONE {
+                    if let Some(KeyCode::Char('g')) =
+                        self.key_seq.completes_sequence(KeyCode::Char('g'))
+                    {
+                        self.select_first();
+                        if let Some(i) = self.selected() {
+                            return Command::message(Message::Select(i));
+                        }
+                        return Command::none();
+                    } else {
+                        self.key_seq.set_pending(KeyCode::Char('g'));
+                        return Command::none();
+                    }
+                }
+                // Any other key clears a pending sequence
+                self.key_seq.clear();
+                if self.key_bindings.up.matches(&key) {
                     self.select_prev();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::Select(i));
                     }
                     Command::none()
-                }
-                (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+                } else if self.key_bindings.down.matches(&key) {
                     self.select_next();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::Select(i));
                     }
                     Command::none()
-                }
-                (KeyCode::Home, _) | (KeyCode::Char('g'), KeyModifiers::NONE) => {
+                } else if self.key_bindings.first.matches(&key) {
                     self.select_first();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::Select(i));
                     }
                     Command::none()
-                }
-                (KeyCode::End, _) | (KeyCode::Char('G'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                } else if self.key_bindings.last.matches(&key) {
                     self.select_last();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::Select(i));
                     }
                     Command::none()
-                }
-                (KeyCode::PageDown, _) => {
+                } else if self.key_bindings.page_down.matches(&key) {
                     self.select_page_down();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::Select(i));
                     }
                     Command::none()
-                }
-                (KeyCode::PageUp, _) => {
+                } else if self.key_bindings.page_up.matches(&key) {
                     self.select_page_up();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::Select(i));
                     }
                     Command::none()
-                }
-                (KeyCode::Char('d'), m) if m.contains(KeyModifiers::CONTROL) => {
+                } else if self.key_bindings.half_down.matches(&key) {
                     self.select_half_page_down();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::Select(i));
                     }
                     Command::none()
-                }
-                (KeyCode::Char('u'), m) if m.contains(KeyModifiers::CONTROL) => {
+                } else if self.key_bindings.half_up.matches(&key) {
                     self.select_half_page_up();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::Select(i));
                     }
                     Command::none()
-                }
-                (KeyCode::Enter, _) => {
+                } else if self.key_bindings.confirm.matches(&key) {
                     if let Some(i) = self.selected() {
                         return Command::message(Message::Confirm(i));
                     }
                     Command::none()
-                }
-                (KeyCode::Char('/'), KeyModifiers::NONE) => {
+                } else if self.key_bindings.filter.matches(&key) {
                     self.activate_filter();
                     Command::message(Message::ToggleFilter)
+                } else {
+                    Command::none()
                 }
-                _ => Command::none(),
-            },
+            }
             Message::Select(i) => {
                 if i < self.items.len() {
                     // Find the position in filtered_indices that maps to original index i
@@ -643,8 +777,8 @@ impl Component for List {
         let has_filter_line = self.filtering || self.filter.as_ref().is_some_and(|f| !f.is_empty());
         let has_status = self.status_message.is_some();
         // Show a "Filter: {text}" indicator at the bottom when a non-empty filter is active
-        let has_filter_display = !self.filtering
-            && self.filter.as_ref().is_some_and(|f| !f.is_empty());
+        let has_filter_display =
+            !self.filtering && self.filter.as_ref().is_some_and(|f| !f.is_empty());
 
         let inner = block.inner(area);
 
@@ -700,15 +834,25 @@ impl Component for List {
 
         // Render the list
         let list_area = chunks[chunk_idx];
-        self.visible_height.set(if list_area.height > 0 { list_area.height as usize } else { 10 });
+        self.visible_height.set(if list_area.height > 0 {
+            list_area.height as usize
+        } else {
+            10
+        });
         chunk_idx += 1;
 
         let items: Vec<ListItem> = self
             .filtered_indices
             .iter()
             .map(|&i| {
-                let selected = self.state.selected().and_then(|s| self.filtered_indices.get(s).copied()) == Some(i);
-                let lines = self.delegate.render(&self.items[i], i, selected, list_area.width);
+                let selected = self
+                    .state
+                    .selected()
+                    .and_then(|s| self.filtered_indices.get(s).copied())
+                    == Some(i);
+                let lines = self
+                    .delegate
+                    .render(&self.items[i], i, selected, list_area.width);
                 ListItem::new(lines)
             })
             .collect();

@@ -323,8 +323,7 @@ impl<M: Model> Program<M> {
         self.render()?;
 
         let fps = self.options.fps.clamp(1, 120);
-        let mut frame_interval =
-            tokio::time::interval(Duration::from_secs_f64(1.0 / fps as f64));
+        let mut frame_interval = tokio::time::interval(Duration::from_secs_f64(1.0 / fps as f64));
         frame_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         let handle_signals = self.options.handle_signals;
@@ -440,7 +439,10 @@ impl<M: Model> Program<M> {
             CommandInner::Terminal(tcmd) => {
                 self.execute_terminal_command(tcmd);
             }
-            CommandInner::Exec { cmd: exec_cmd, on_exit } => {
+            CommandInner::Exec {
+                cmd: exec_cmd,
+                on_exit,
+            } => {
                 // Release terminal, run process, restore terminal
                 let _ = self.release_terminal();
 
@@ -503,9 +505,7 @@ impl<M: Model> Program<M> {
                     crate::command::CursorStyle::BlinkingBar => {
                         CrosstermSetCursorStyle::BlinkingBar
                     }
-                    crate::command::CursorStyle::SteadyBar => {
-                        CrosstermSetCursorStyle::SteadyBar
-                    }
+                    crate::command::CursorStyle::SteadyBar => CrosstermSetCursorStyle::SteadyBar,
                 };
                 execute!(writer, ct_style).ok();
             }
@@ -525,7 +525,11 @@ impl<M: Model> Program<M> {
                 execute!(writer, SetTitle(title)).ok();
             }
             TerminalCommand::ClearScreen => {
-                execute!(writer, crossterm::terminal::Clear(crossterm::terminal::ClearType::All)).ok();
+                execute!(
+                    writer,
+                    crossterm::terminal::Clear(crossterm::terminal::ClearType::All)
+                )
+                .ok();
             }
             TerminalCommand::ScrollUp(n) => {
                 execute!(writer, crossterm::terminal::ScrollUp(n)).ok();
@@ -644,7 +648,9 @@ fn execute_command_sequential<Msg: Send + 'static>(
     })
 }
 
-fn init_terminal(options: &ProgramOptions) -> Result<Terminal<CrosstermBackend<Output>>, ProgramError> {
+fn init_terminal(
+    options: &ProgramOptions,
+) -> Result<Terminal<CrosstermBackend<Output>>, ProgramError> {
     // Install panic hook that restores terminal (only once to avoid stacking)
     if options.catch_panics {
         use std::sync::Once;
@@ -690,7 +696,10 @@ fn restore_terminal(options: &ProgramOptions) -> Result<(), ProgramError> {
     Ok(())
 }
 
-fn restore_terminal_minimal(alt_screen: bool, output_target: OutputTarget) -> Result<(), std::io::Error> {
+fn restore_terminal_minimal(
+    alt_screen: bool,
+    output_target: OutputTarget,
+) -> Result<(), std::io::Error> {
     // Use best-effort cleanup: continue even if individual steps fail,
     // so we restore as much terminal state as possible.
     let r1 = disable_raw_mode();

@@ -300,10 +300,7 @@ fn parse_ansi_line(line: &str) -> Line<'static> {
                 if final_byte == Some('m') {
                     // SGR sequence — flush accumulated text
                     if !buf.is_empty() {
-                        spans.push(Span::styled(
-                            std::mem::take(&mut buf),
-                            current_style,
-                        ));
+                        spans.push(Span::styled(std::mem::take(&mut buf), current_style));
                     }
 
                     // Parse SGR codes
@@ -355,7 +352,10 @@ fn parse_ansi_line(line: &str) -> Line<'static> {
 /// assert_eq!(lines.len(), 1);
 /// ```
 pub fn parse_ansi(input: &str) -> Vec<Line<'static>> {
-    input.split('\n').map(|line| parse_ansi_line(line)).collect()
+    input
+        .split('\n')
+        .map(|line| parse_ansi_line(line))
+        .collect()
 }
 
 #[cfg(test)]
@@ -457,9 +457,7 @@ mod tests {
         assert_eq!(spans[0].content, "bold red");
         assert_eq!(
             spans[0].style,
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
         );
     }
 

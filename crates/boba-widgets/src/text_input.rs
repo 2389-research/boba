@@ -13,8 +13,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 /// Controls how input text is displayed.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum EchoMode {
     /// Display characters as typed.
     #[default]
@@ -111,6 +110,7 @@ pub struct TextInput {
     suggestion_index: usize,
     undo_stack: VecDeque<(Vec<char>, usize)>,
     redo_stack: VecDeque<(Vec<char>, usize)>,
+    history: Option<boba_core::input_history::InputHistory>,
 }
 
 impl TextInput {
@@ -134,7 +134,32 @@ impl TextInput {
             suggestion_index: 0,
             undo_stack: VecDeque::new(),
             redo_stack: VecDeque::new(),
+            history: None,
         }
+    }
+
+    /// Enable input history with the given maximum number of entries.
+    ///
+    /// When enabled, Up/Down keys browse through previously submitted
+    /// inputs (shell-like behavior).
+    pub fn with_history(mut self, max_entries: usize) -> Self {
+        self.history = Some(boba_core::input_history::InputHistory::new(max_entries));
+        self
+    }
+
+    /// Push a value into the input history.
+    ///
+    /// Typically called after the user submits input. Empty strings
+    /// and consecutive duplicates are ignored.
+    pub fn push_history(&mut self, entry: impl Into<String>) {
+        if let Some(ref mut history) = self.history {
+            history.push(entry);
+        }
+    }
+
+    /// Get a reference to the input history, if enabled.
+    pub fn history(&self) -> Option<&boba_core::input_history::InputHistory> {
+        self.history.as_ref()
     }
 
     /// Set a prompt string displayed before the input (e.g., `> `).
@@ -523,15 +548,13 @@ impl Component for TextInput {
                     }
                     // Word movement: Ctrl+Left/Right or Alt+Left/Right
                     (KeyCode::Left, m)
-                        if m.contains(KeyModifiers::CONTROL)
-                            || m.contains(KeyModifiers::ALT) =>
+                        if m.contains(KeyModifiers::CONTROL) || m.contains(KeyModifiers::ALT) =>
                     {
                         self.move_cursor_word_left();
                         Command::none()
                     }
                     (KeyCode::Right, m)
-                        if m.contains(KeyModifiers::CONTROL)
-                            || m.contains(KeyModifiers::ALT) =>
+                        if m.contains(KeyModifiers::CONTROL) || m.contains(KeyModifiers::ALT) =>
                     {
                         self.move_cursor_word_right();
                         Command::none()
@@ -585,9 +608,36 @@ impl Component for TextInput {
                         }
                         Command::none()
                     }
-                    (KeyCode::Enter, _) => {
-                        Command::message(Message::Submit(self.value()))
+                    (KeyCode::Up, KeyModifiers::NONE) => {
+                        if self.history.is_some() {
+                            let current = self.value();
+                            let entry = self
+                                .history
+                                .as_mut()
+                                .unwrap()
+                                .older(&current)
+                                .map(|s| s.to_owned());
+                            if let Some(entry) = entry {
+                                self.value = entry.chars().collect();
+                                self.cursor = self.value.len();
+                                self.filter_suggestions();
+                                return Command::message(Message::Changed(self.value()));
+                            }
+                        }
+                        Command::none()
                     }
+                    (KeyCode::Down, KeyModifiers::NONE) => {
+                        if let Some(ref mut history) = self.history {
+                            if let Some(entry) = history.newer().map(|s| s.to_owned()) {
+                                self.value = entry.chars().collect();
+                                self.cursor = self.value.len();
+                                self.filter_suggestions();
+                                return Command::message(Message::Changed(self.value()));
+                            }
+                        }
+                        Command::none()
+                    }
+                    (KeyCode::Enter, _) => Command::message(Message::Submit(self.value())),
                     _ => Command::none(),
                 };
                 self.run_validate();
@@ -1171,5 +1221,64 @@ mod tests {
         input.update(Message::KeyPress(key_ctrl(KeyCode::Char('z'))));
         assert_eq!(input.value(), "");
         assert_eq!(input.cursor_position(), 0);
+    }
+
+    #[test]
+    fn history_browse_up_down() {
+        let mut input = TextInput::new("").with_history(100);
+        input.focus();
+        input.push_history("first");
+        input.push_history("second");
+
+        // Type something as draft
+        input.update(Message::KeyPress(key(KeyCode::Char('d'))));
+        assert_eq!(input.value(), "d");
+
+        // Up → most recent history entry
+        input.update(Message::KeyPress(key(KeyCode::Up)));
+        assert_eq!(input.value(), "second");
+
+        // Up → older entry
+        input.update(Message::KeyPress(key(KeyCode::Up)));
+        assert_eq!(input.value(), "first");
+
+        // Up at oldest → stays
+        input.update(Message::KeyPress(key(KeyCode::Up)));
+        assert_eq!(input.value(), "first");
+
+        // Down → newer entry
+        input.update(Message::KeyPress(key(KeyCode::Down)));
+        assert_eq!(input.value(), "second");
+
+        // Down → back to draft
+        input.update(Message::KeyPress(key(KeyCode::Down)));
+        assert_eq!(input.value(), "d");
+
+        // Down past draft → no change
+        input.update(Message::KeyPress(key(KeyCode::Down)));
+        assert_eq!(input.value(), "d");
+    }
+
+    #[test]
+    fn history_without_history_enabled() {
+        let mut input = TextInput::new("");
+        input.focus();
+        input.set_value("hello");
+        // Up/Down should be no-ops when history is not enabled
+        input.update(Message::KeyPress(key(KeyCode::Up)));
+        assert_eq!(input.value(), "hello");
+        input.update(Message::KeyPress(key(KeyCode::Down)));
+        assert_eq!(input.value(), "hello");
+    }
+
+    #[test]
+    fn history_cursor_moves_to_end() {
+        let mut input = TextInput::new("").with_history(100);
+        input.focus();
+        input.push_history("long entry");
+
+        input.update(Message::KeyPress(key(KeyCode::Up)));
+        assert_eq!(input.value(), "long entry");
+        assert_eq!(input.cursor_position(), 10); // cursor at end
     }
 }

@@ -14,3 +14,10 @@ description = "Widget library for boba — reusable TUI components"
 boba-core = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
+syntect = { workspace = true, optional = true }
+pulldown-cmark = { workspace = true, optional = true }
+
+[features]
+default = []
+syntax-highlighting = ["dep:syntect"]
+markdown = ["dep:pulldown-cmark", "syntax-highlighting"]

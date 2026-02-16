@@ -69,18 +69,19 @@ impl Model for Counter {
             .title(" Counter ");
 
         let count_style = if self.count > 0 {
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
         } else if self.count < 0 {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
         };
 
         let text = vec![
-            Line::from(Span::styled(
-                format!("Count: {}", self.count),
-                count_style,
-            )),
+            Line::from(Span::styled(format!("Count: {}", self.count), count_style)),
             Line::raw(""),
             Line::from(vec![
                 Span::styled("↑/k", Style::default().fg(Color::Cyan)),

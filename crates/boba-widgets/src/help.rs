@@ -270,8 +270,7 @@ impl Component for Help {
                 KeyCode::PageDown if self.visible => {
                     let visible_height = self.visible_height.get() as usize;
                     let max = self.bindings.len();
-                    self.scroll_offset =
-                        self.scroll_offset.saturating_add(visible_height).min(max);
+                    self.scroll_offset = self.scroll_offset.saturating_add(visible_height).min(max);
                     Command::none()
                 }
                 KeyCode::Home if self.visible => {
@@ -322,10 +321,7 @@ impl Component for Help {
                 if !current_group.is_empty() {
                     lines.push(Line::raw(""));
                 }
-                lines.push(Line::from(Span::styled(
-                    &binding.group,
-                    self.style.group,
-                )));
+                lines.push(Line::from(Span::styled(&binding.group, self.style.group)));
                 current_group = binding.group.clone();
             }
 
@@ -375,11 +371,7 @@ mod tests {
     fn make_help(binding_count: usize) -> Help {
         let mut h = Help::new();
         for i in 0..binding_count {
-            h.add_binding(
-                format!("key{i}"),
-                format!("desc{i}"),
-                "group".to_string(),
-            );
+            h.add_binding(format!("key{i}"), format!("desc{i}"), "group".to_string());
         }
         h.show();
         h

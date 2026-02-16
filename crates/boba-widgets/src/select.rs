@@ -6,7 +6,9 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{
+    Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph,
+};
 use ratatui::Frame;
 
 /// Messages for the select component.
@@ -217,12 +219,8 @@ impl Component for Select {
         // Render dropdown overlay when open
         if self.open {
             let dropdown_height = (self.options.len() as u16 + 2).min(10);
-            let dropdown_area = Rect::new(
-                area.x,
-                area.y + area.height,
-                area.width,
-                dropdown_height,
-            );
+            let dropdown_area =
+                Rect::new(area.x, area.y + area.height, area.width, dropdown_height);
 
             // Only render if within frame bounds
             let frame_area = frame.area();

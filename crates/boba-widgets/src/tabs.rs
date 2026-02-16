@@ -144,7 +144,11 @@ impl Component for Tabs {
         let titles: Vec<Line> = self.titles.iter().map(|t| Line::raw(t.as_str())).collect();
 
         let tabs = RatatuiTabs::new(titles)
-            .block(Block::default().borders(Borders::BOTTOM).border_style(self.style.border))
+            .block(
+                Block::default()
+                    .borders(Borders::BOTTOM)
+                    .border_style(self.style.border),
+            )
             .select(self.selected)
             .style(self.style.normal)
             .highlight_style(self.style.selected)

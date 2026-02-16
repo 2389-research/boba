@@ -54,12 +54,12 @@ impl Model for FullApp {
     type Flags = ();
 
     fn init(_: ()) -> (Self, Command<Msg>) {
-        let tabs = Tabs::new(vec![
-            "Browse".into(),
-            "About".into(),
-        ]);
+        let tabs = Tabs::new(vec!["Browse".into(), "About".into()]);
 
-        let items_list: Vec<list::Item> = ITEMS.iter().map(|(name, _)| list::Item::new(*name)).collect();
+        let items_list: Vec<list::Item> = ITEMS
+            .iter()
+            .map(|(name, _)| list::Item::new(*name))
+            .collect();
         let mut items = List::new(items_list);
         items.focus();
 
@@ -92,9 +92,7 @@ impl Model for FullApp {
     fn update(&mut self, msg: Msg) -> Command<Msg> {
         match msg {
             // Delegate tab navigation to the Tabs component.
-            Msg::Tab(m) => {
-                self.tabs.update(m).map(Msg::Tab)
-            }
+            Msg::Tab(m) => self.tabs.update(m).map(Msg::Tab),
             // Intercept item selection to synchronize the viewport content.
             Msg::Item(list::Message::Select(i)) => {
                 if i < ITEMS.len() {
@@ -148,11 +146,9 @@ impl Model for FullApp {
         // Tab switching: render different content based on the active tab index.
         match self.tabs.selected() {
             0 => {
-                let [list_area, content_area] = Layout::horizontal([
-                    Constraint::Percentage(30),
-                    Constraint::Percentage(70),
-                ])
-                .areas(main_area);
+                let [list_area, content_area] =
+                    Layout::horizontal([Constraint::Percentage(30), Constraint::Percentage(70)])
+                        .areas(main_area);
 
                 self.items.view(frame, list_area);
                 self.content.view(frame, content_area);
@@ -161,7 +157,9 @@ impl Model for FullApp {
                 let about = Paragraph::new(vec![
                     Line::from(Span::styled(
                         "boba",
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
                     )),
                     Line::raw(""),
                     Line::raw("A Bubble Tea-inspired TUI framework for Rust,"),

@@ -40,10 +40,9 @@ impl SubscriptionSource for Every {
     }
 
     fn stream(self) -> BoxStream<'static, Instant> {
-        let stream = tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(
-            self.interval,
-        ))
-        .map(|tick| tick.into_std());
+        let stream =
+            tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(self.interval))
+                .map(|tick| tick.into_std());
         Box::pin(stream)
     }
 }

@@ -45,8 +45,7 @@ impl Model for FormApp {
     fn init(_: ()) -> (Self, Command<Msg>) {
         let mut username = TextInput::new("Enter username");
         username.focus();
-        let password =
-            TextInput::new("Enter password").with_echo_mode(EchoMode::Password('*'));
+        let password = TextInput::new("Enter password").with_echo_mode(EchoMode::Password('*'));
         (
             FormApp {
                 username,
@@ -94,7 +93,8 @@ impl Model for FormApp {
                 if user.is_empty() {
                     self.submitted = Some("Username is required!".to_string());
                 } else {
-                    self.submitted = Some(format!("Submitted: {} / {}", user, "*".repeat(pass.len())));
+                    self.submitted =
+                        Some(format!("Submitted: {} / {}", user, "*".repeat(pass.len())));
                 }
                 Command::none()
             }
@@ -116,7 +116,11 @@ impl Model for FormApp {
         // Title
         let title = Paragraph::new("Login Form")
             .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL));
         frame.render_widget(title, title_area);
 
@@ -168,7 +172,11 @@ impl Model for FormApp {
             Span::raw(" quit"),
         ]))
         .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::DarkGray)));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        );
         frame.render_widget(help, help_area);
     }
 

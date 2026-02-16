@@ -46,9 +46,9 @@ impl Binding {
         if !self.enabled {
             return false;
         }
-        self.keys.iter().any(|k| {
-            k.code == event.code && event.modifiers.contains(k.modifiers)
-        })
+        self.keys
+            .iter()
+            .any(|k| k.code == event.code && event.modifiers.contains(k.modifiers))
     }
 
     /// Set whether this binding is enabled. Disabled bindings never match key events.

@@ -473,10 +473,7 @@ mod tests {
 
     #[test]
     fn command_batch_multiple() {
-        let cmd: Command<i32> = Command::batch(vec![
-            Command::message(1),
-            Command::message(2),
-        ]);
+        let cmd: Command<i32> = Command::batch(vec![Command::message(1), Command::message(2)]);
         match cmd.inner {
             CommandInner::Batch(cmds) => assert_eq!(cmds.len(), 2),
             _ => panic!("Expected Batch"),
@@ -525,10 +522,7 @@ mod tests {
 
     #[test]
     fn command_map_batch() {
-        let cmd: Command<i32> = Command::batch(vec![
-            Command::message(1),
-            Command::message(2),
-        ]);
+        let cmd: Command<i32> = Command::batch(vec![Command::message(1), Command::message(2)]);
         let mapped: Command<String> = cmd.map(|n| n.to_string());
         match mapped.inner {
             CommandInner::Batch(cmds) => assert_eq!(cmds.len(), 2),

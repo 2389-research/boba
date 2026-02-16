@@ -153,11 +153,9 @@ impl Model for FileBrowser {
         frame.render_widget(title, title_area);
 
         // Main two-panel split: picker (60%) | preview (40%)
-        let [picker_area, preview_area] = Layout::horizontal([
-            Constraint::Percentage(60),
-            Constraint::Percentage(40),
-        ])
-        .areas(main_area);
+        let [picker_area, preview_area] =
+            Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .areas(main_area);
 
         self.picker.view(frame, picker_area);
         self.preview.view(frame, preview_area);

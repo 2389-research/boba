@@ -6,7 +6,9 @@ use boba_core::component::Component;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, Cell as RatatuiCell, Row, Table as RatatuiTable, TableState};
+use ratatui::widgets::{
+    Block, Borders, Cell as RatatuiCell, Row, Table as RatatuiTable, TableState,
+};
 use ratatui::Frame;
 use std::cell::Cell as StdCell;
 
@@ -27,6 +29,105 @@ pub enum Message {
 /// Supports per-row styling, column-level cell navigation, and simple
 /// CSV parsing.
 ///
+/// Configurable key bindings for the table component.
+pub struct TableKeyBindings {
+    /// Move selection up. Default: Up, k
+    pub up: crate::key::Binding,
+    /// Move selection down. Default: Down, j
+    pub down: crate::key::Binding,
+    /// Move column left. Default: Left, h
+    pub col_left: crate::key::Binding,
+    /// Move column right. Default: Right, l
+    pub col_right: crate::key::Binding,
+    /// Next column (wrapping). Default: Tab
+    pub col_next: crate::key::Binding,
+    /// Move to first row. Default: Home
+    pub first: crate::key::Binding,
+    /// Move to last row. Default: End, G
+    pub last: crate::key::Binding,
+    /// Page up. Default: PageUp
+    pub page_up: crate::key::Binding,
+    /// Page down. Default: PageDown
+    pub page_down: crate::key::Binding,
+    /// Half page down. Default: Ctrl+D
+    pub half_down: crate::key::Binding,
+    /// Half page up. Default: Ctrl+U
+    pub half_up: crate::key::Binding,
+    /// Confirm selection. Default: Enter
+    pub confirm: crate::key::Binding,
+}
+
+impl Default for TableKeyBindings {
+    fn default() -> Self {
+        use crate::key::{Binding, KeyCombination};
+        Self {
+            up: Binding::with_keys(
+                vec![
+                    KeyCombination::new(KeyCode::Up),
+                    KeyCombination::new(KeyCode::Char('k')),
+                ],
+                "Up",
+            ),
+            down: Binding::with_keys(
+                vec![
+                    KeyCombination::new(KeyCode::Down),
+                    KeyCombination::new(KeyCode::Char('j')),
+                ],
+                "Down",
+            ),
+            col_left: Binding::with_keys(
+                vec![
+                    KeyCombination::new(KeyCode::Left),
+                    KeyCombination::new(KeyCode::Char('h')),
+                ],
+                "Column left",
+            ),
+            col_right: Binding::with_keys(
+                vec![
+                    KeyCombination::new(KeyCode::Right),
+                    KeyCombination::new(KeyCode::Char('l')),
+                ],
+                "Column right",
+            ),
+            col_next: Binding::new(KeyCombination::new(KeyCode::Tab), "Next column"),
+            first: Binding::new(KeyCombination::new(KeyCode::Home), "First"),
+            last: Binding::with_keys(
+                vec![
+                    KeyCombination::new(KeyCode::End),
+                    KeyCombination::new(KeyCode::Char('G')),
+                    KeyCombination::shift(KeyCode::Char('G')),
+                ],
+                "Last",
+            ),
+            page_up: Binding::new(KeyCombination::new(KeyCode::PageUp), "Page up"),
+            page_down: Binding::new(KeyCombination::new(KeyCode::PageDown), "Page down"),
+            half_down: Binding::new(KeyCombination::ctrl(KeyCode::Char('d')), "Half page down"),
+            half_up: Binding::new(KeyCombination::ctrl(KeyCode::Char('u')), "Half page up"),
+            confirm: Binding::new(KeyCombination::new(KeyCode::Enter), "Confirm"),
+        }
+    }
+}
+
+impl crate::key::KeyMap for TableKeyBindings {
+    fn short_help(&self) -> Vec<&crate::key::Binding> {
+        vec![&self.up, &self.down, &self.confirm]
+    }
+
+    fn full_help(&self) -> Vec<Vec<&crate::key::Binding>> {
+        vec![
+            vec![&self.up, &self.down, &self.first, &self.last],
+            vec![&self.col_left, &self.col_right, &self.col_next],
+            vec![
+                &self.page_up,
+                &self.page_down,
+                &self.half_up,
+                &self.half_down,
+            ],
+            vec![&self.confirm],
+        ]
+    }
+}
+
 /// # Example
 ///
 /// ```ignore
@@ -49,6 +150,8 @@ pub struct Table {
     visible_height: StdCell<usize>,
     selected_col: Option<usize>,
     row_style_fn: Option<RowStyleFn>,
+    key_seq: boba_core::key_sequence::KeySequenceTracker,
+    key_bindings: TableKeyBindings,
 }
 
 type RowStyleFn = Box<dyn Fn(usize, &[String]) -> Style + Send>;
@@ -119,7 +222,20 @@ impl Table {
             visible_height: StdCell::new(10),
             selected_col: None,
             row_style_fn: None,
+            key_seq: boba_core::key_sequence::KeySequenceTracker::new(),
+            key_bindings: TableKeyBindings::default(),
         }
+    }
+
+    /// Set custom key bindings for the table.
+    pub fn with_key_bindings(mut self, bindings: TableKeyBindings) -> Self {
+        self.key_bindings = bindings;
+        self
+    }
+
+    /// Get a reference to the current key bindings.
+    pub fn key_bindings(&self) -> &TableKeyBindings {
+        &self.key_bindings
     }
 
     /// Create a table from simple CSV data.
@@ -163,7 +279,10 @@ impl Table {
     /// Set a per-row styling function. The function receives the row index and
     /// the row data, and returns a `Style` to use as the base style for that row.
     /// This enables alternating row colors, conditional highlighting, etc.
-    pub fn with_row_style(mut self, f: impl Fn(usize, &[String]) -> Style + Send + 'static) -> Self {
+    pub fn with_row_style(
+        mut self,
+        f: impl Fn(usize, &[String]) -> Style + Send + 'static,
+    ) -> Self {
         self.row_style_fn = Some(Box::new(f));
         self
     }
@@ -313,69 +432,75 @@ impl Component for Table {
 
     fn update(&mut self, msg: Message) -> Command<Message> {
         match msg {
-            Message::KeyPress(key) if self.focus => match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
+            Message::KeyPress(key) if self.focus => {
+                // Check for gg sequence (vim go-to-first)
+                if key.code == KeyCode::Char('g') && !key.modifiers.contains(KeyModifiers::SHIFT) {
+                    if let Some(KeyCode::Char('g')) =
+                        self.key_seq.completes_sequence(KeyCode::Char('g'))
+                    {
+                        self.set_cursor(0);
+                        if let Some(i) = self.selected() {
+                            return Command::message(Message::SelectRow(i));
+                        }
+                        return Command::none();
+                    } else {
+                        self.key_seq.set_pending(KeyCode::Char('g'));
+                        return Command::none();
+                    }
+                }
+                self.key_seq.clear();
+                if self.key_bindings.up.matches(&key) {
                     self.select_prev();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
                     Command::none()
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
+                } else if self.key_bindings.down.matches(&key) {
                     self.select_next();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
                     Command::none()
-                }
-                KeyCode::Left | KeyCode::Char('h') => {
+                } else if self.key_bindings.col_left.matches(&key) {
                     self.move_col_left();
                     Command::none()
-                }
-                KeyCode::Right | KeyCode::Char('l') => {
+                } else if self.key_bindings.col_right.matches(&key) {
                     self.move_col_right();
                     Command::none()
-                }
-                KeyCode::Tab => {
+                } else if self.key_bindings.col_next.matches(&key) {
                     self.move_col_next_wrap();
                     Command::none()
-                }
-                KeyCode::PageUp => {
+                } else if self.key_bindings.page_up.matches(&key) {
                     self.move_up(self.visible_height.get());
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
                     Command::none()
-                }
-                KeyCode::PageDown => {
+                } else if self.key_bindings.page_down.matches(&key) {
                     self.move_down(self.visible_height.get());
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
                     Command::none()
-                }
-                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                } else if self.key_bindings.half_down.matches(&key) {
                     self.move_down(self.visible_height.get() / 2);
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
                     Command::none()
-                }
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                } else if self.key_bindings.half_up.matches(&key) {
                     self.move_up(self.visible_height.get() / 2);
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
                     Command::none()
-                }
-                KeyCode::Char('g') => {
+                } else if self.key_bindings.first.matches(&key) {
                     self.set_cursor(0);
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
                     Command::none()
-                }
-                KeyCode::Char('G') => {
+                } else if self.key_bindings.last.matches(&key) {
                     if !self.rows.is_empty() {
                         self.set_cursor(self.rows.len() - 1);
                         if let Some(i) = self.selected() {
@@ -383,15 +508,15 @@ impl Component for Table {
                         }
                     }
                     Command::none()
-                }
-                KeyCode::Enter => {
+                } else if self.key_bindings.confirm.matches(&key) {
                     if let Some(i) = self.selected() {
                         return Command::message(Message::Confirm(i));
                     }
                     Command::none()
+                } else {
+                    Command::none()
                 }
-                _ => Command::none(),
-            },
+            }
             Message::SelectRow(i) => {
                 if i < self.rows.len() {
                     self.state.select(Some(i));
@@ -421,7 +546,8 @@ impl Component for Table {
         let inner_height = block.inner(area).height as usize;
         // header row (1) + bottom margin (1) = 2 rows consumed by header
         let data_height = inner_height.saturating_sub(2);
-        self.visible_height.set(if data_height > 0 { data_height } else { 10 });
+        self.visible_height
+            .set(if data_height > 0 { data_height } else { 10 });
 
         let header_cells: Vec<RatatuiCell> = self
             .headers
@@ -624,17 +750,14 @@ mod tests {
 
     #[test]
     fn row_style_fn_stored_correctly() {
-        let t = Table::new(
-            vec!["A".into()],
-            vec![vec!["1".into()], vec!["2".into()]],
-        )
-        .with_row_style(|idx, _row| {
-            if idx % 2 == 0 {
-                Style::default().fg(Color::Green)
-            } else {
-                Style::default().fg(Color::Red)
-            }
-        });
+        let t = Table::new(vec!["A".into()], vec![vec!["1".into()], vec!["2".into()]])
+            .with_row_style(|idx, _row| {
+                if idx % 2 == 0 {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::Red)
+                }
+            });
         assert!(t.row_style_fn.is_some());
     }
 
@@ -647,11 +770,8 @@ mod tests {
                 Style::default().fg(Color::Red)
             }
         };
-        let t = Table::new(
-            vec!["A".into()],
-            vec![vec!["1".into()], vec!["2".into()]],
-        )
-        .with_row_style(style_fn);
+        let t = Table::new(vec!["A".into()], vec![vec!["1".into()], vec!["2".into()]])
+            .with_row_style(style_fn);
 
         // Verify the function returns the expected styles when called directly.
         let f = t.row_style_fn.as_ref().unwrap();

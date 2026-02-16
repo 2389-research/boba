@@ -17,6 +17,11 @@ ratatui = { workspace = true }
 crossterm = { workspace = true }
 tokio = { workspace = true }
 
+[features]
+default = []
+syntax-highlighting = ["boba-widgets/syntax-highlighting"]
+markdown = ["boba-widgets/markdown"]
+
 [[example]]
 name = "counter"
 path = "../../examples/counter.rs"

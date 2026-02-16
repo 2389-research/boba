@@ -141,7 +141,10 @@ impl Component for Spinner {
 
     fn subscriptions(&self) -> Vec<Subscription<Message>> {
         if self.spinning {
-            vec![boba_core::subscription::subscribe(Every::new(self.interval, self.id)).map(|_: std::time::Instant| Message::Tick)]
+            vec![
+                boba_core::subscription::subscribe(Every::new(self.interval, self.id))
+                    .map(|_: std::time::Instant| Message::Tick),
+            ]
         } else {
             vec![]
         }

@@ -95,7 +95,11 @@ impl Model for HttpApp {
         // Header
         let title = Paragraph::new("Async HTTP Example")
             .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan)),
+            );
         frame.render_widget(title, header);
 
         // Body
@@ -104,13 +108,16 @@ impl Model for HttpApp {
             .border_style(Style::default().fg(Color::DarkGray));
 
         let content = match &self.status {
-            Status::Idle => {
-                Paragraph::new(Line::from(vec![
-                    Span::raw("Press "),
-                    Span::styled("f", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                    Span::raw(" to fetch data..."),
-                ]))
-            }
+            Status::Idle => Paragraph::new(Line::from(vec![
+                Span::raw("Press "),
+                Span::styled(
+                    "f",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" to fetch data..."),
+            ])),
             Status::Loading => {
                 let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
                 let spinner = spinner_frames[self.frame_idx];
@@ -119,14 +126,11 @@ impl Model for HttpApp {
                     Span::raw(" Fetching data..."),
                 ]))
             }
-            Status::Done(data) => {
-                Paragraph::new(data.as_str())
-                    .style(Style::default().fg(Color::Green))
-                    .wrap(Wrap { trim: false })
-            }
+            Status::Done(data) => Paragraph::new(data.as_str())
+                .style(Style::default().fg(Color::Green))
+                .wrap(Wrap { trim: false }),
             Status::Error(err) => {
-                Paragraph::new(format!("Error: {}", err))
-                    .style(Style::default().fg(Color::Red))
+                Paragraph::new(format!("Error: {}", err)).style(Style::default().fg(Color::Red))
             }
         };
 
@@ -140,7 +144,11 @@ impl Model for HttpApp {
             Span::raw(" quit"),
         ]))
         .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::DarkGray)));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        );
         frame.render_widget(help, footer);
     }
 
@@ -161,10 +169,13 @@ impl Model for HttpApp {
         // loading. When the status changes away from Loading, the runtime
         // automatically stops this subscription.
         if matches!(self.status, Status::Loading) {
-            subs.push(boba::subscribe(boba::Every::new(
-                std::time::Duration::from_millis(80),
-                "spinner",
-            )).map(|_: std::time::Instant| Msg::Tick));
+            subs.push(
+                boba::subscribe(boba::Every::new(
+                    std::time::Duration::from_millis(80),
+                    "spinner",
+                ))
+                .map(|_: std::time::Instant| Msg::Tick),
+            );
         }
 
         subs

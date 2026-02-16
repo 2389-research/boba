@@ -69,7 +69,11 @@
 pub mod command;
 pub mod component;
 pub mod event;
+pub mod input_history;
+pub mod input_layer;
+pub mod key_sequence;
 pub mod model;
+pub mod quit;
 pub mod runtime;
 pub mod subscription;
 pub mod subscriptions;
@@ -78,10 +82,16 @@ pub mod testing;
 pub use command::{Command, CursorStyle, ExecCommand, MouseMode, TerminalCommand};
 pub use component::Component;
 pub use event::TerminalEvent;
+pub use input_history::InputHistory;
+pub use input_layer::{InputLayer, LayeredModel};
+pub use key_sequence::KeySequenceTracker;
 pub use model::Model;
-pub use runtime::{log_to_file, OutputTarget, Program, ProgramError, ProgramHandle, ProgramOptions};
+pub use quit::QuitConfirmation;
+pub use runtime::{
+    log_to_file, OutputTarget, Program, ProgramError, ProgramHandle, ProgramOptions,
+};
 pub use subscription::{subscribe, Subscription, SubscriptionId, SubscriptionSource};
-pub use subscriptions::{terminal_events, Every, After, TerminalEvents};
+pub use subscriptions::{terminal_events, After, Every, TerminalEvents};
 
 /// Run a boba application with default options.
 pub async fn run<M: Model>(flags: M::Flags) -> Result<M, ProgramError> {
