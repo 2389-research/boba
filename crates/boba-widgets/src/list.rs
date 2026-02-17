@@ -323,8 +323,6 @@ impl List {
         self
     }
 
-    /// Set the loading state. When loading is true and a spinner is present,
-    /// the spinner is rendered at the top of the list area.
     /// Set custom key bindings for the list.
     pub fn with_key_bindings(mut self, bindings: ListKeyBindings) -> Self {
         self.key_bindings = bindings;
@@ -336,6 +334,8 @@ impl List {
         &self.key_bindings
     }
 
+    /// Set the loading state. When loading is true and a spinner is present,
+    /// the spinner is rendered at the top of the list area.
     pub fn with_loading(mut self, loading: bool) -> Self {
         self.loading = loading;
         if loading && self.spinner.is_none() {

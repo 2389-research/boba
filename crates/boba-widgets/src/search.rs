@@ -2,7 +2,7 @@
 //!
 //! Provides an inline search bar that sits at the bottom of a content area,
 //! tracks matches by index, and lets the user navigate between them with
-//! `n` / `N`.  The parent is responsible for providing searchable content
+//! `Ctrl+N` / `Ctrl+P`.  The parent is responsible for providing searchable content
 //! and reporting match indices — this widget handles the UI and navigation
 //! state.
 //!
@@ -224,9 +224,7 @@ impl Component for Search {
                             Command::none()
                         }
                     }
-                    (KeyCode::Char('n'), KeyModifiers::NONE)
-                        if !self.query.is_empty() && !self.matches.is_empty() =>
-                    {
+                    (KeyCode::Char('n'), KeyModifiers::CONTROL) if !self.matches.is_empty() => {
                         self.next_match();
                         if let Some(idx) = self.current_match_value() {
                             Command::message(Message::JumpTo(idx))
@@ -234,9 +232,7 @@ impl Component for Search {
                             Command::none()
                         }
                     }
-                    (KeyCode::Char('N'), KeyModifiers::SHIFT)
-                        if !self.query.is_empty() && !self.matches.is_empty() =>
-                    {
+                    (KeyCode::Char('p'), KeyModifiers::CONTROL) if !self.matches.is_empty() => {
                         self.prev_match();
                         if let Some(idx) = self.current_match_value() {
                             Command::message(Message::JumpTo(idx))
@@ -358,10 +354,10 @@ mod tests {
         }
     }
 
-    fn shift_key(code: KeyCode) -> KeyEvent {
+    fn ctrl_key(code: KeyCode) -> KeyEvent {
         KeyEvent {
             code,
-            modifiers: KeyModifiers::SHIFT,
+            modifiers: KeyModifiers::CONTROL,
             kind: KeyEventKind::Press,
             state: KeyEventState::NONE,
         }
@@ -435,21 +431,21 @@ mod tests {
         assert_eq!(search.current_match_index(), 0);
         assert_eq!(search.current_match_value(), Some(0));
 
-        // n → next
-        search.update(Message::KeyPress(key(KeyCode::Char('n'))));
+        // Ctrl+N → next
+        search.update(Message::KeyPress(ctrl_key(KeyCode::Char('n'))));
         assert_eq!(search.current_match_index(), 1);
         assert_eq!(search.current_match_value(), Some(5));
 
-        // n → next
-        search.update(Message::KeyPress(key(KeyCode::Char('n'))));
+        // Ctrl+N → next
+        search.update(Message::KeyPress(ctrl_key(KeyCode::Char('n'))));
         assert_eq!(search.current_match_index(), 2);
 
-        // n → wraps to 0
-        search.update(Message::KeyPress(key(KeyCode::Char('n'))));
+        // Ctrl+N → wraps to 0
+        search.update(Message::KeyPress(ctrl_key(KeyCode::Char('n'))));
         assert_eq!(search.current_match_index(), 0);
 
-        // N → wraps to last
-        search.update(Message::KeyPress(shift_key(KeyCode::Char('N'))));
+        // Ctrl+P → wraps to last
+        search.update(Message::KeyPress(ctrl_key(KeyCode::Char('p'))));
         assert_eq!(search.current_match_index(), 2);
     }
 

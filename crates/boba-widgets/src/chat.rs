@@ -164,12 +164,6 @@ pub struct Chat {
     separator: String,
     /// Whether to render content as markdown (when feature available).
     render_markdown: bool,
-    /// Cached rendered lines (invalidated on message changes).
-    rendered_lines: Vec<Line<'static>>,
-    /// Number of messages when lines were last rendered.
-    rendered_message_count: usize,
-    /// Content hash for cache invalidation.
-    rendered_content_hash: u64,
 
     #[cfg(feature = "markdown")]
     markdown_renderer: crate::markdown::Markdown,
@@ -194,9 +188,6 @@ impl Chat {
             spinner_frame: 0,
             separator: "\u{2500}".repeat(5),
             render_markdown: false,
-            rendered_lines: Vec::new(),
-            rendered_message_count: 0,
-            rendered_content_hash: 0,
             #[cfg(feature = "markdown")]
             markdown_renderer: crate::markdown::Markdown::new(),
         }
@@ -232,7 +223,6 @@ impl Chat {
         if !self.scroll_locked {
             self.scroll_offset = 0;
         }
-        self.invalidate_cache();
     }
 
     /// Update the last message's content (for streaming).
@@ -242,7 +232,6 @@ impl Chat {
             if !self.scroll_locked {
                 self.scroll_offset = 0;
             }
-            self.invalidate_cache();
         }
     }
 
@@ -250,7 +239,6 @@ impl Chat {
     pub fn finish_streaming(&mut self) {
         if let Some(msg) = self.messages.last_mut() {
             msg.is_streaming = false;
-            self.invalidate_cache();
         }
     }
 
@@ -259,7 +247,6 @@ impl Chat {
         self.messages.clear();
         self.scroll_offset = 0;
         self.scroll_locked = false;
-        self.invalidate_cache();
     }
 
     /// Get the messages.
@@ -281,25 +268,7 @@ impl Chat {
     pub fn tick_spinner(&mut self) {
         self.spinner_frame = (self.spinner_frame + 1) % SPINNER_FRAMES.len();
         // Only invalidate if we have a streaming message
-        if self.messages.last().is_some_and(|m| m.is_streaming) {
-            self.invalidate_cache();
-        }
-    }
-
-    fn invalidate_cache(&mut self) {
-        self.rendered_content_hash = 0;
-    }
-
-    fn content_hash(&self) -> u64 {
-        let mut hash: u64 = self.messages.len() as u64;
-        for msg in &self.messages {
-            hash = hash.wrapping_mul(31).wrapping_add(msg.content.len() as u64);
-            hash = hash.wrapping_mul(31).wrapping_add(msg.is_streaming as u64);
-        }
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add(self.spinner_frame as u64);
-        hash
+        if self.messages.last().is_some_and(|m| m.is_streaming) {}
     }
 
     fn render_lines(&self) -> Vec<Line<'static>> {
@@ -448,17 +417,7 @@ impl Component for Chat {
             return;
         }
 
-        // Build rendered lines (using cache when possible)
-        let current_hash = self.content_hash();
-        let lines = if current_hash == self.rendered_content_hash
-            && self.rendered_message_count == self.messages.len()
-            && !self.rendered_lines.is_empty()
-        {
-            &self.rendered_lines
-        } else {
-            // We can't mutate self in view(), so always render fresh
-            &self.render_lines()
-        };
+        let lines = self.render_lines();
 
         let content_height = lines.len() as u16;
 
@@ -488,7 +447,7 @@ impl Component for Chat {
         let clamped_offset = self.scroll_offset.min(max_scroll);
         let actual_scroll = max_scroll.saturating_sub(clamped_offset);
 
-        let paragraph = Paragraph::new(lines.clone())
+        let paragraph = Paragraph::new(lines)
             .block(block)
             .wrap(Wrap { trim: false })
             .scroll((actual_scroll, 0));

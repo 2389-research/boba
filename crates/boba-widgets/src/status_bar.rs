@@ -71,29 +71,6 @@ impl<'a> StatusBar<'a> {
     /// This is a convenience method for use inside a `Component::view()`.
     /// For direct `Widget` rendering, use `frame.render_widget(bar, area)`.
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        // Build a single line padded to full width.
-        let width = area.width as usize;
-        let left_text = self
-            .left
-            .as_ref()
-            .map(|l| line_to_string(l))
-            .unwrap_or_default();
-        let center_text = self
-            .center
-            .as_ref()
-            .map(|l| line_to_string(l))
-            .unwrap_or_default();
-        let right_text = self
-            .right
-            .as_ref()
-            .map(|l| line_to_string(l))
-            .unwrap_or_default();
-
-        let left_w = left_text.len();
-        let center_w = center_text.len();
-        let right_w = right_text.len();
-
-        // Use a 3-column layout if we have content for each section.
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -126,9 +103,6 @@ impl<'a> StatusBar<'a> {
                 .alignment(ratatui::layout::Alignment::Right);
             frame.render_widget(p, chunks[2]);
         }
-
-        // Suppress unused warnings — these are available for future use.
-        let _ = (left_w, center_w, right_w, width);
     }
 }
 
@@ -136,10 +110,6 @@ impl<'a> Default for StatusBar<'a> {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn line_to_string(line: &Line<'_>) -> String {
-    line.spans.iter().map(|s| s.content.as_ref()).collect()
 }
 
 #[cfg(test)]
@@ -171,11 +141,5 @@ mod tests {
         let s = Style::default().bg(Color::Red);
         let bar = StatusBar::new().style(s);
         assert_eq!(bar.style, s);
-    }
-
-    #[test]
-    fn line_to_string_works() {
-        let line = Line::raw("hello");
-        assert_eq!(line_to_string(&line), "hello");
     }
 }
