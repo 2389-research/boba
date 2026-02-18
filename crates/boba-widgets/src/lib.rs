@@ -10,6 +10,7 @@
 //! |--------|-------------|
 //! | [`autocomplete`] | Input with filtered dropdown suggestions |
 //! | [`cursor`] | Blinking / styled cursor helper |
+//! | [`dropdown`] | Standalone dropdown overlay for selectable items |
 //! | [`filepicker`] | Interactive file and directory picker |
 //! | [`help`] | Key-binding help overlay / bubble |
 //! | [`list`] | Scrollable, filterable list |
@@ -50,6 +51,7 @@ pub mod chat;
 #[cfg(feature = "syntax-highlighting")]
 pub mod code_block;
 pub mod cursor;
+pub mod dropdown;
 pub mod filepicker;
 pub mod focus;
 pub mod help;
