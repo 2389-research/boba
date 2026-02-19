@@ -8,6 +8,7 @@ use boba_core::subscription::Subscription;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::key::Binding;
+use crate::selection::SelectionState;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -267,6 +268,7 @@ pub struct List<I: Item> {
     filter: Option<String>,
     filtering: bool,
     filtered_indices: Vec<usize>,
+    selection: SelectionState,
     visible_height: Cell<usize>,
     status_message: Option<String>,
     delegate: Box<dyn ItemDelegate<I>>,
@@ -308,7 +310,8 @@ impl<I: Item> List<I> {
         if !items.is_empty() {
             state.select(Some(0));
         }
-        let filtered_indices = (0..items.len()).collect();
+        let count = items.len();
+        let filtered_indices = (0..count).collect();
         Self {
             items,
             state,
@@ -319,6 +322,7 @@ impl<I: Item> List<I> {
             filter: None,
             filtering: false,
             filtered_indices,
+            selection: SelectionState::new(count, 10),
             visible_height: Cell::new(10),
             status_message: None,
             delegate: Box::new(DefaultDelegate),
@@ -405,9 +409,11 @@ impl<I: Item> List<I> {
 
     /// Returns the selected index in the original (unfiltered) items list.
     pub fn selected(&self) -> Option<usize> {
-        self.state
-            .selected()
-            .and_then(|i| self.filtered_indices.get(i).copied())
+        if self.filtered_indices.is_empty() {
+            None
+        } else {
+            self.filtered_indices.get(self.selection.cursor()).copied()
+        }
     }
 
     /// Programmatically set the selected index (in the original items list).
@@ -419,12 +425,13 @@ impl<I: Item> List<I> {
         }
         // Find the position of `index` in filtered_indices
         if let Some(pos) = self.filtered_indices.iter().position(|&i| i == index) {
-            self.state.select(Some(pos));
+            self.selection.select(pos);
         } else {
             // If not found in filtered view, select the closest or last
             let clamped = index.min(self.filtered_indices.len() - 1);
-            self.state.select(Some(clamped));
+            self.selection.select(clamped);
         }
+        self.sync_list_state();
     }
 
     /// Return a reference to the currently selected item, if any.
@@ -436,15 +443,8 @@ impl<I: Item> List<I> {
     pub fn set_items(&mut self, items: Vec<I>) {
         self.items = items;
         self.rebuild_filtered_indices();
-        if self.filtered_indices.is_empty() {
-            self.state.select(None);
-        } else if self.state.selected().is_none() {
-            self.state.select(Some(0));
-        } else if let Some(i) = self.state.selected() {
-            if i >= self.filtered_indices.len() {
-                self.state.select(Some(self.filtered_indices.len() - 1));
-            }
-        }
+        self.selection.set_count(self.filtered_indices.len());
+        self.sync_list_state();
     }
 
     // --- Filtering ---
@@ -491,23 +491,17 @@ impl<I: Item> List<I> {
         self.filtering = false;
         self.filter = None;
         self.rebuild_filtered_indices();
-        // Restore selection to beginning of full list
-        if self.filtered_indices.is_empty() {
-            self.state.select(None);
-        } else {
-            self.state.select(Some(0));
-        }
+        self.selection.set_count(self.filtered_indices.len());
+        self.selection.home();
+        self.sync_list_state();
     }
 
     fn apply_filter(&mut self, value: String) {
         self.filter = Some(value);
         self.rebuild_filtered_indices();
-        // Reset selection within filtered results
-        if self.filtered_indices.is_empty() {
-            self.state.select(None);
-        } else {
-            self.state.select(Some(0));
-        }
+        self.selection.set_count(self.filtered_indices.len());
+        self.selection.home();
+        self.sync_list_state();
     }
 
     // --- Item manipulation ---
@@ -517,12 +511,8 @@ impl<I: Item> List<I> {
         let index = index.min(self.items.len());
         self.items.insert(index, item);
         self.rebuild_filtered_indices();
-        // Fix up selection
-        if self.filtered_indices.is_empty() {
-            self.state.select(None);
-        } else if self.state.selected().is_none() {
-            self.state.select(Some(0));
-        }
+        self.selection.set_count(self.filtered_indices.len());
+        self.sync_list_state();
     }
 
     /// Remove and return the item at the given index, if it exists.
@@ -532,13 +522,8 @@ impl<I: Item> List<I> {
         }
         let removed = self.items.remove(index);
         self.rebuild_filtered_indices();
-        if self.filtered_indices.is_empty() {
-            self.state.select(None);
-        } else if let Some(sel) = self.state.selected() {
-            if sel >= self.filtered_indices.len() {
-                self.state.select(Some(self.filtered_indices.len() - 1));
-            }
-        }
+        self.selection.set_count(self.filtered_indices.len());
+        self.sync_list_state();
         Some(removed)
     }
 
@@ -547,15 +532,8 @@ impl<I: Item> List<I> {
         if index < self.items.len() {
             self.items[index] = item;
             self.rebuild_filtered_indices();
-            if let Some(sel) = self.state.selected() {
-                if sel >= self.filtered_indices.len() {
-                    if self.filtered_indices.is_empty() {
-                        self.state.select(None);
-                    } else {
-                        self.state.select(Some(self.filtered_indices.len() - 1));
-                    }
-                }
-            }
+            self.selection.set_count(self.filtered_indices.len());
+            self.sync_list_state();
         }
     }
 
@@ -574,79 +552,66 @@ impl<I: Item> List<I> {
     // --- Navigation helpers ---
 
     fn select_next(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let next = if i + 1 >= self.filtered_indices.len() {
-            0
-        } else {
-            i + 1
-        };
-        self.state.select(Some(next));
+        self.sync_selection_visible();
+        self.selection.move_down();
+        self.sync_list_state();
     }
 
     fn select_prev(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let prev = if i == 0 {
-            self.filtered_indices.len().saturating_sub(1)
-        } else {
-            i - 1
-        };
-        self.state.select(Some(prev));
+        self.sync_selection_visible();
+        self.selection.move_up();
+        self.sync_list_state();
     }
 
     fn select_first(&mut self) {
-        if !self.filtered_indices.is_empty() {
-            self.state.select(Some(0));
-        }
+        self.sync_selection_visible();
+        self.selection.home();
+        self.sync_list_state();
     }
 
     fn select_last(&mut self) {
-        if !self.filtered_indices.is_empty() {
-            self.state.select(Some(self.filtered_indices.len() - 1));
-        }
+        self.sync_selection_visible();
+        self.selection.end();
+        self.sync_list_state();
     }
 
     fn select_page_down(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let next = (i + self.visible_height.get()).min(self.filtered_indices.len() - 1);
-        self.state.select(Some(next));
+        self.sync_selection_visible();
+        self.selection.page_down();
+        self.sync_list_state();
     }
 
     fn select_page_up(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let prev = i.saturating_sub(self.visible_height.get());
-        self.state.select(Some(prev));
+        self.sync_selection_visible();
+        self.selection.page_up();
+        self.sync_list_state();
     }
 
     fn select_half_page_down(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let half = self.visible_height.get() / 2;
-        let next = (i + half).min(self.filtered_indices.len() - 1);
-        self.state.select(Some(next));
+        self.sync_selection_visible();
+        self.selection.half_page_down();
+        self.sync_list_state();
     }
 
     fn select_half_page_up(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
+        self.sync_selection_visible();
+        self.selection.half_page_up();
+        self.sync_list_state();
+    }
+
+    fn sync_selection_visible(&mut self) {
+        let h = self.visible_height.get();
+        if self.selection.visible() != h {
+            self.selection.set_visible(h);
         }
-        let i = self.state.selected().unwrap_or(0);
-        let half = self.visible_height.get() / 2;
-        let prev = i.saturating_sub(half);
-        self.state.select(Some(prev));
+    }
+
+    fn sync_list_state(&mut self) {
+        if self.filtered_indices.is_empty() {
+            self.state.select(None);
+        } else {
+            self.state.select(Some(self.selection.cursor()));
+        }
     }
 }
 
@@ -793,7 +758,8 @@ impl<I: Item> Component for List<I> {
                 if i < self.items.len() {
                     // Find the position in filtered_indices that maps to original index i
                     if let Some(pos) = self.filtered_indices.iter().position(|&idx| idx == i) {
-                        self.state.select(Some(pos));
+                        self.selection.select(pos);
+                        self.sync_list_state();
                     }
                 }
                 Command::none()
@@ -888,12 +854,10 @@ impl<I: Item> Component for List<I> {
         let items: Vec<ListItem> = self
             .filtered_indices
             .iter()
-            .map(|&i| {
-                let selected = self
-                    .state
-                    .selected()
-                    .and_then(|s| self.filtered_indices.get(s).copied())
-                    == Some(i);
+            .enumerate()
+            .map(|(pos, &i)| {
+                let selected = !self.filtered_indices.is_empty()
+                    && pos == self.selection.cursor();
                 let lines = self
                     .delegate
                     .render(&self.items[i], i, selected, list_area.width);
