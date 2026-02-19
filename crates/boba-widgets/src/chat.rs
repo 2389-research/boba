@@ -271,6 +271,32 @@ impl Chat {
         if self.messages.last().is_some_and(|m| m.is_streaming) {}
     }
 
+    /// Scroll to the bottom and unlock auto-scroll.
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = 0;
+        self.scroll_locked = false;
+    }
+
+    /// Set the scroll offset directly.
+    /// Use this when the host application needs to jump to a specific position.
+    pub fn set_scroll_offset(&mut self, offset: u16) {
+        self.scroll_offset = offset;
+        self.scroll_locked = offset > 0;
+    }
+
+    /// Set the scroll locked state directly.
+    pub fn set_scroll_locked(&mut self, locked: bool) {
+        self.scroll_locked = locked;
+    }
+
+    /// Set the maximum scroll value.
+    /// This is normally computed during `view()` from the content height.
+    /// Use this when you need scroll operations to work without rendering
+    /// (e.g., in tests or when the host application manages its own rendering).
+    pub fn set_max_scroll(&mut self, max: u16) {
+        self.max_scroll.set(max);
+    }
+
     fn render_lines(&self) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 

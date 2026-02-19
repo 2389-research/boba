@@ -243,7 +243,7 @@ impl Component for Select {
                             .border_style(self.style.dropdown_border),
                     )
                     .highlight_style(self.style.selected)
-                    .highlight_symbol(&self.style.highlight_symbol)
+                    .highlight_symbol(self.style.highlight_symbol.as_str())
                     .highlight_spacing(HighlightSpacing::Always);
 
                 frame.render_stateful_widget(list, dropdown_area, &mut state);

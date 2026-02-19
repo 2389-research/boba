@@ -249,6 +249,12 @@ impl TextInput {
         self.cursor = self.value.len();
     }
 
+    /// Programmatically set the cursor position.
+    /// The position is clamped to `0..=value.len()`.
+    pub fn set_cursor(&mut self, pos: usize) {
+        self.cursor = pos.min(self.value.len());
+    }
+
     /// Clear the input value and reset cursor to position 0.
     pub fn reset(&mut self) {
         self.value.clear();
