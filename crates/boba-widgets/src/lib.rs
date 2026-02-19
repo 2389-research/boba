@@ -45,6 +45,7 @@
 //! | [`focus`] | [`FocusGroup`](focus::FocusGroup) for managing focus across multiple components |
 //! | [`key`] | Key-binding helpers and constants |
 //! | [`runeutil`] | Unicode-aware string width and truncation utilities |
+//! | [`selection`] | [`SelectionState`](selection::SelectionState) for shared list navigation |
 
 pub mod autocomplete;
 pub mod chat;
@@ -66,6 +67,7 @@ pub mod progress;
 pub mod runeutil;
 pub mod search;
 pub mod select;
+pub mod selection;
 pub mod spinner;
 pub mod status_bar;
 pub mod stopwatch;
