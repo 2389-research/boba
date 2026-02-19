@@ -12,7 +12,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, HighlightSpacing, List as RatatuiList, ListItem, ListState, Paragraph,
+    Block, HighlightSpacing, List as RatatuiList, ListItem, ListState, Paragraph,
 };
 use ratatui::Frame;
 use std::cell::Cell;
@@ -262,6 +262,7 @@ pub struct List<I: Item> {
     state: ListState,
     focus: bool,
     style: ListStyle,
+    block: Option<Block<'static>>,
     title: String,
     filter: Option<String>,
     filtering: bool,
@@ -282,10 +283,6 @@ pub struct ListStyle {
     pub normal: Style,
     /// Style applied to the currently highlighted item.
     pub selected: Style,
-    /// Border style when the list has focus.
-    pub focused_border: Style,
-    /// Border style when the list does not have focus.
-    pub unfocused_border: Style,
     /// Symbol rendered to the left of the selected item (e.g. "▸ ").
     pub highlight_symbol: String,
 }
@@ -297,8 +294,6 @@ impl Default for ListStyle {
             selected: Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-            focused_border: Style::default().fg(Color::Cyan),
-            unfocused_border: Style::default().fg(Color::DarkGray),
             highlight_symbol: "▸ ".to_string(),
         }
     }
@@ -319,6 +314,7 @@ impl<I: Item> List<I> {
             state,
             focus: false,
             style: ListStyle::default(),
+            block: None,
             title: String::new(),
             filter: None,
             filtering: false,
@@ -336,6 +332,21 @@ impl<I: Item> List<I> {
     /// Set the list border title.
     pub fn with_title(mut self, title: impl Into<String>) -> Self {
         self.title = title.into();
+        self
+    }
+
+    /// Set an optional block (border/chrome) around the list.
+    ///
+    /// When `None` (the default), the list renders borderless, using the
+    /// full area. Callers who want a border can supply their own `Block`:
+    ///
+    /// ```ignore
+    /// use ratatui::widgets::{Block, Borders};
+    /// let list = List::new(items)
+    ///     .with_block(Block::default().borders(Borders::ALL).title("My List"));
+    /// ```
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
         self
     }
 
@@ -802,19 +813,13 @@ impl<I: Item> Component for List<I> {
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
-        let border_style = if self.focus {
-            self.style.focused_border
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(area);
+            frame.render_widget(block.clone(), area);
+            inner
         } else {
-            self.style.unfocused_border
+            area
         };
-
-        let mut block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style);
-
-        if !self.title.is_empty() {
-            block = block.title(self.title.as_str());
-        }
 
         // Determine layout sections
         let has_spinner_line = self.loading && self.spinner.is_some();
@@ -823,11 +828,6 @@ impl<I: Item> Component for List<I> {
         // Show a "Filter: {text}" indicator at the bottom when a non-empty filter is active
         let has_filter_display =
             !self.filtering && self.filter.as_ref().is_some_and(|f| !f.is_empty());
-
-        let inner = block.inner(area);
-
-        // Render the outer block first
-        frame.render_widget(block, area);
 
         if inner.height == 0 || inner.width == 0 {
             return;
