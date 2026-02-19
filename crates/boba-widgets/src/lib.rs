@@ -11,7 +11,7 @@
 //! | [`cursor`] | Blinking / styled cursor helper |
 //! | [`dropdown`] | Standalone dropdown overlay for selectable items |
 //! | [`filepicker`] | Interactive file and directory picker |
-//! | [`help`] | Key-binding help overlay / bubble |
+//! | [`help`] | Key-binding help formatting utilities |
 //! | [`list`] | Scrollable, filterable list |
 //! | [`modal`] | Generic modal/dialog overlay with action buttons |
 //! | [`paginator`] | Page-dot indicator for multi-page views |

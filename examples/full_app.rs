@@ -12,11 +12,12 @@ use boba::crossterm::event::{KeyCode, KeyModifiers};
 use boba::ratatui::layout::{Constraint, Layout};
 use boba::ratatui::style::{Color, Modifier, Style};
 use boba::ratatui::text::{Line, Span};
-use boba::ratatui::widgets::{Block, Borders, Paragraph};
+use boba::ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use boba::ratatui::Frame;
 use boba::widgets::chrome::focus_block;
-use boba::widgets::help::{self, Help};
+use boba::widgets::help::Help;
 use boba::widgets::list::{self, List};
+use boba::widgets::overlay;
 use boba::widgets::tabs::{self, Tabs};
 use boba::widgets::viewport::{self, Viewport};
 use boba::{terminal_events, Command, Component, Model, Subscription, TerminalEvent};
@@ -27,6 +28,7 @@ struct FullApp {
     items: List<String>,
     content: Viewport,
     help: Help,
+    show_help: bool,
     panel_focus: usize, // 0 = list, 1 = viewport
 }
 
@@ -35,7 +37,7 @@ enum Msg {
     Tab(tabs::Message),
     Item(list::Message),
     Content(viewport::Message),
-    Help(help::Message),
+    ToggleHelp,
     FocusLeft,
     FocusRight,
     Quit,
@@ -78,6 +80,7 @@ impl Model for FullApp {
                 items,
                 content,
                 help,
+                show_help: false,
                 panel_focus: 0,
             },
             Command::none(),
@@ -110,7 +113,10 @@ impl Model for FullApp {
             }
             Msg::Item(m) => self.items.update(m).map(Msg::Item),
             Msg::Content(m) => self.content.update(m).map(Msg::Content),
-            Msg::Help(m) => self.help.update(m).map(Msg::Help),
+            Msg::ToggleHelp => {
+                self.show_help = !self.show_help;
+                Command::none()
+            }
             Msg::FocusLeft => {
                 self.panel_focus = 0;
                 self.items.focus();
@@ -181,8 +187,32 @@ impl Model for FullApp {
         let status = Paragraph::new(self.help.short_help_line());
         frame.render_widget(status, status_area);
 
-        // Help overlay (renders on top)
-        self.help.view(frame, area);
+        // Help overlay (renders on top when visible)
+        if self.show_help {
+            // Group bindings by group name for full_help_view
+            let bindings = self.help.bindings();
+            let mut groups: Vec<Vec<_>> = Vec::new();
+            let mut current_group = String::new();
+            for b in bindings {
+                if b.group != current_group {
+                    groups.push(Vec::new());
+                    current_group = b.group.clone();
+                }
+                if let Some(last) = groups.last_mut() {
+                    last.push(b.clone());
+                }
+            }
+            let lines = self.help.full_help_view(&groups);
+            let overlay_area = overlay::centered_fixed(60, 20, area);
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(" Help ");
+            let inner = overlay::render_overlay(frame, overlay_area, Some(&block));
+            let paragraph = Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .scroll((0, 0));
+            frame.render_widget(paragraph, inner);
+        }
     }
 
     // Key routing depends on which panel has focus. Direction keys are sent
@@ -193,7 +223,7 @@ impl Model for FullApp {
             TerminalEvent::Key(key) => match (key.code, key.modifiers) {
                 (KeyCode::Char('q'), KeyModifiers::NONE) | (KeyCode::Esc, _) => Some(Msg::Quit),
                 (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => Some(Msg::Quit),
-                (KeyCode::Char('?'), _) => Some(Msg::Help(help::Message::Toggle)),
+                (KeyCode::Char('?'), _) => Some(Msg::ToggleHelp),
                 (KeyCode::Tab, _) => Some(Msg::Tab(tabs::Message::KeyPress(key))),
                 (KeyCode::Left, _) | (KeyCode::Char('h'), _) => Some(Msg::FocusLeft),
                 (KeyCode::Right, _) | (KeyCode::Char('l'), _) => {
