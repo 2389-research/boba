@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 
 /// Controls how input text is displayed.
@@ -35,12 +35,6 @@ pub struct TextInputStyle {
     pub placeholder: Style,
     /// Style applied to the cursor character.
     pub cursor: Style,
-    /// Border style when the input is focused.
-    pub focused_border: Style,
-    /// Border style when the input is unfocused.
-    pub unfocused_border: Style,
-    /// Border style when a validation error is present.
-    pub error_border: Style,
     /// Style applied to autocomplete suggestion ghost text.
     pub suggestion: Style,
 }
@@ -52,9 +46,6 @@ impl Default for TextInputStyle {
             text: Style::default(),
             placeholder: Style::default().fg(Color::DarkGray),
             cursor: Style::default().add_modifier(Modifier::REVERSED),
-            focused_border: Style::default().fg(Color::Cyan),
-            unfocused_border: Style::default().fg(Color::DarkGray),
-            error_border: Style::default().fg(Color::Red),
             suggestion: Style::default().fg(Color::DarkGray),
         }
     }
@@ -111,6 +102,7 @@ pub struct TextInput {
     undo_stack: VecDeque<(Vec<char>, usize)>,
     redo_stack: VecDeque<(Vec<char>, usize)>,
     history: Option<boba_core::input_history::InputHistory>,
+    block: Option<Block<'static>>,
 }
 
 impl TextInput {
@@ -135,6 +127,7 @@ impl TextInput {
             undo_stack: VecDeque::new(),
             redo_stack: VecDeque::new(),
             history: None,
+            block: None,
         }
     }
 
@@ -183,6 +176,15 @@ impl TextInput {
     /// Set custom styles for the input.
     pub fn with_style(mut self, style: TextInputStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// Wrap the input in the given block (border/title).
+    ///
+    /// By default the input renders borderless. Use this method when you want
+    /// the widget itself to draw a surrounding [`Block`].
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
         self
     }
 
@@ -665,19 +667,14 @@ impl Component for TextInput {
 
     fn view(&self, frame: &mut Frame, area: Rect) {
         let display = self.display_value();
-        let border_style = if self.err.is_some() {
-            self.style.error_border
-        } else if self.focus {
-            self.style.focused_border
+
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(area);
+            frame.render_widget(block.clone(), area);
+            inner
         } else {
-            self.style.unfocused_border
+            area
         };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style);
-
-        let inner = block.inner(area);
 
         // Calculate visible range with horizontal scrolling
         let visible_width = inner.width as usize;
@@ -755,8 +752,8 @@ impl Component for TextInput {
             }
         }
 
-        let paragraph = Paragraph::new(Line::from(spans)).block(block);
-        frame.render_widget(paragraph, area);
+        let paragraph = Paragraph::new(Line::from(spans));
+        frame.render_widget(paragraph, inner);
     }
 
     fn focused(&self) -> bool {
