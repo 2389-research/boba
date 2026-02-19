@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 use ratatui::Frame;
 
 /// Messages for the text area component.
@@ -62,6 +62,7 @@ pub struct TextArea {
     soft_wrap: bool,
     line_prompt: Option<String>,
     history: Option<boba_core::input_history::InputHistory>,
+    block: Option<Block<'static>>,
 }
 
 /// Style configuration for the text area.
@@ -73,10 +74,6 @@ pub struct TextAreaStyle {
     pub cursor: Style,
     /// Style applied to line number gutters.
     pub line_number: Style,
-    /// Border style when the editor is focused.
-    pub focused_border: Style,
-    /// Border style when the editor is unfocused.
-    pub unfocused_border: Style,
     /// Style applied to selected (highlighted) text.
     pub selection: Style,
 }
@@ -87,8 +84,6 @@ impl Default for TextAreaStyle {
             text: Style::default(),
             cursor: Style::default().add_modifier(Modifier::REVERSED),
             line_number: Style::default().fg(Color::DarkGray),
-            focused_border: Style::default().fg(Color::Cyan),
-            unfocused_border: Style::default().fg(Color::DarkGray),
             selection: Style::default().bg(Color::DarkGray),
         }
     }
@@ -112,6 +107,7 @@ impl TextArea {
             soft_wrap: false,
             line_prompt: None,
             history: None,
+            block: None,
         }
     }
 
@@ -165,6 +161,12 @@ impl TextArea {
     /// the buffer has multiple lines, Up/Down move the cursor normally.
     pub fn with_history(mut self, max_entries: usize) -> Self {
         self.history = Some(boba_core::input_history::InputHistory::new(max_entries));
+        self
+    }
+
+    /// Set a block (border/title) to wrap the text area.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
         self
     }
 
@@ -967,17 +969,13 @@ impl Component for TextArea {
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
-        let border_style = if self.focus {
-            self.style.focused_border
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(area);
+            frame.render_widget(block.clone(), area);
+            inner
         } else {
-            self.style.unfocused_border
+            area
         };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style);
-
-        let inner = block.inner(area);
         let visible_height = inner.height as usize;
 
         // Adjust scroll to keep cursor visible
@@ -1103,13 +1101,11 @@ impl Component for TextArea {
         let _cursor_display_col = line_num_width + prompt_width + self.cursor_col;
 
         let paragraph = if self.soft_wrap {
-            Paragraph::new(display_lines)
-                .block(block)
-                .wrap(Wrap { trim: false })
+            Paragraph::new(display_lines).wrap(Wrap { trim: false })
         } else {
-            Paragraph::new(display_lines).block(block)
+            Paragraph::new(display_lines)
         };
-        frame.render_widget(paragraph, area);
+        frame.render_widget(paragraph, inner);
     }
 
     fn focused(&self) -> bool {
