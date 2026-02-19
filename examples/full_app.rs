@@ -23,7 +23,7 @@ use boba::{terminal_events, Command, Component, Model, Subscription, TerminalEve
 /// A full-featured app demonstrating multiple components together.
 struct FullApp {
     tabs: Tabs,
-    items: List,
+    items: List<String>,
     content: Viewport,
     help: Help,
     panel_focus: usize, // 0 = list, 1 = viewport
@@ -56,10 +56,7 @@ impl Model for FullApp {
     fn init(_: ()) -> (Self, Command<Msg>) {
         let tabs = Tabs::new(vec!["Browse".into(), "About".into()]);
 
-        let items_list: Vec<list::Item> = ITEMS
-            .iter()
-            .map(|(name, _)| list::Item::new(*name))
-            .collect();
+        let items_list: Vec<String> = ITEMS.iter().map(|(name, _)| name.to_string()).collect();
         let mut items = List::new(items_list);
         items.focus();
 
