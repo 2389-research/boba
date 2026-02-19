@@ -1,6 +1,7 @@
 //! Data table component with row and column navigation, sorting, per-row
 //! styling, and CSV parsing.
 
+use crate::selection::SelectionState;
 use boba_core::command::Command;
 use boba_core::component::Component;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -144,9 +145,11 @@ pub struct Table {
     rows: Vec<Vec<String>>,
     widths: Vec<Constraint>,
     state: TableState,
+    selection: SelectionState,
     focus: bool,
     style: TableStyle,
     title: String,
+    /// Cached visible row count from the last render, used for page navigation.
     visible_height: StdCell<usize>,
     selected_col: Option<usize>,
     block: Option<Block<'static>>,
@@ -206,11 +209,13 @@ impl Table {
         if !rows.is_empty() {
             state.select(Some(0));
         }
+        let selection = SelectionState::new(rows.len(), 10);
         Self {
             headers,
             rows,
             widths,
             state,
+            selection,
             focus: false,
             style: TableStyle::default(),
             title: String::new(),
@@ -301,7 +306,11 @@ impl Table {
 
     /// Return the index of the currently selected row, if any.
     pub fn selected(&self) -> Option<usize> {
-        self.state.selected()
+        if self.rows.is_empty() {
+            None
+        } else {
+            Some(self.selection.cursor())
+        }
     }
 
     /// Get the currently selected column index, if column navigation is active.
@@ -317,63 +326,47 @@ impl Table {
     /// Replace the data rows, clamping the selection to the new bounds.
     pub fn set_rows(&mut self, rows: Vec<Vec<String>>) {
         self.rows = rows;
+        self.selection.set_count(self.rows.len());
+        self.sync_table_state();
+    }
+
+    /// Sync the ratatui `TableState` selection from `SelectionState`.
+    fn sync_table_state(&mut self) {
         if self.rows.is_empty() {
             self.state.select(None);
-        } else if let Some(i) = self.state.selected() {
-            if i >= self.rows.len() {
-                self.state.select(Some(self.rows.len() - 1));
-            }
+        } else {
+            self.state.select(Some(self.selection.cursor()));
         }
     }
 
     fn select_next(&mut self) {
-        if self.rows.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let next = if i + 1 >= self.rows.len() { 0 } else { i + 1 };
-        self.state.select(Some(next));
+        self.selection.move_down();
+        self.sync_table_state();
     }
 
     fn select_prev(&mut self) {
-        if self.rows.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let prev = if i == 0 {
-            self.rows.len().saturating_sub(1)
-        } else {
-            i - 1
-        };
-        self.state.select(Some(prev));
+        self.selection.move_up();
+        self.sync_table_state();
     }
 
     /// Move the cursor up by `n` rows, clamped to the first row.
     pub fn move_up(&mut self, n: usize) {
-        if self.rows.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        self.state.select(Some(i.saturating_sub(n)));
+        let new = self.selection.cursor().saturating_sub(n);
+        self.selection.select(new);
+        self.sync_table_state();
     }
 
     /// Move the cursor down by `n` rows, clamped to the last row.
     pub fn move_down(&mut self, n: usize) {
-        if self.rows.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let last = self.rows.len().saturating_sub(1);
-        self.state.select(Some((i + n).min(last)));
+        let new = self.selection.cursor() + n;
+        self.selection.select(new); // select() clamps to count-1
+        self.sync_table_state();
     }
 
     /// Jump to a specific row index, clamped to valid range.
     pub fn set_cursor(&mut self, n: usize) {
-        if self.rows.is_empty() {
-            return;
-        }
-        let last = self.rows.len().saturating_sub(1);
-        self.state.select(Some(n.min(last)));
+        self.selection.select(n);
+        self.sync_table_state();
     }
 
     /// Alias for `selected()`.
@@ -433,6 +426,9 @@ impl Component for Table {
     type Message = Message;
 
     fn update(&mut self, msg: Message) -> Command<Message> {
+        // Sync the cached visible height from the last render into SelectionState.
+        self.selection.set_visible(self.visible_height.get());
+
         match msg {
             Message::KeyPress(key) if self.focus => {
                 // Check for gg sequence (vim go-to-first)
@@ -473,25 +469,29 @@ impl Component for Table {
                     self.move_col_next_wrap();
                     Command::none()
                 } else if self.key_bindings.page_up.matches(&key) {
-                    self.move_up(self.visible_height.get());
+                    self.selection.page_up();
+                    self.sync_table_state();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
                     Command::none()
                 } else if self.key_bindings.page_down.matches(&key) {
-                    self.move_down(self.visible_height.get());
+                    self.selection.page_down();
+                    self.sync_table_state();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
                     Command::none()
                 } else if self.key_bindings.half_down.matches(&key) {
-                    self.move_down(self.visible_height.get() / 2);
+                    self.selection.half_page_down();
+                    self.sync_table_state();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
                     Command::none()
                 } else if self.key_bindings.half_up.matches(&key) {
-                    self.move_up(self.visible_height.get() / 2);
+                    self.selection.half_page_up();
+                    self.sync_table_state();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
@@ -521,7 +521,8 @@ impl Component for Table {
             }
             Message::SelectRow(i) => {
                 if i < self.rows.len() {
-                    self.state.select(Some(i));
+                    self.selection.select(i);
+                    self.sync_table_state();
                 }
                 Command::none()
             }
