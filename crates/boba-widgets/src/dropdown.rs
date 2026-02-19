@@ -4,6 +4,7 @@
 //! text input or filtering — items are managed externally. It renders as a
 //! bordered overlay anchored above or below a given area.
 
+use crate::selection::SelectionState;
 use boba_core::command::Command;
 use boba_core::component::Component;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -68,8 +69,7 @@ pub enum Message {
 /// ```
 pub struct Dropdown {
     items: Vec<String>,
-    selected: usize,
-    scroll_offset: usize,
+    selection: SelectionState,
     max_visible: usize,
     title: String,
     style: DropdownStyle,
@@ -83,8 +83,7 @@ impl Dropdown {
     pub fn new() -> Self {
         Self {
             items: Vec::new(),
-            selected: 0,
-            scroll_offset: 0,
+            selection: SelectionState::new(0, 8),
             max_visible: 8,
             title: String::new(),
             style: DropdownStyle::default(),
@@ -103,6 +102,7 @@ impl Dropdown {
     /// Set the maximum number of visible items before scrolling.
     pub fn with_max_visible(mut self, max: usize) -> Self {
         self.max_visible = max.max(1);
+        self.selection.set_visible(self.max_visible);
         self
     }
 
@@ -128,8 +128,8 @@ impl Dropdown {
     pub fn set_items(&mut self, items: Vec<String>) {
         self.visible = !items.is_empty();
         self.items = items;
-        self.selected = 0;
-        self.scroll_offset = 0;
+        self.selection.set_count(self.items.len());
+        self.selection.select(0);
     }
 
     /// Set the title (mutable variant).
@@ -159,47 +159,25 @@ impl Dropdown {
 
     /// Get the currently selected index.
     pub fn selected_index(&self) -> usize {
-        self.selected
+        self.selection.cursor()
     }
 
     /// Get the currently selected item value.
     pub fn selected_value(&self) -> Option<&str> {
-        self.items.get(self.selected).map(|s| s.as_str())
+        self.items.get(self.selection.cursor()).map(|s| s.as_str())
     }
 
     /// Set the selected index programmatically.
     pub fn set_selected(&mut self, index: usize) {
-        if !self.items.is_empty() {
-            self.selected = index.min(self.items.len() - 1);
-            self.ensure_selected_visible();
-        }
-    }
-
-    /// Adjust scroll offset to keep the selected item in view.
-    fn ensure_selected_visible(&mut self) {
-        if self.selected < self.scroll_offset {
-            self.scroll_offset = self.selected;
-        } else if self.selected >= self.scroll_offset + self.max_visible {
-            self.scroll_offset = self.selected + 1 - self.max_visible;
-        }
+        self.selection.select(index);
     }
 
     fn select_next(&mut self) {
-        if !self.items.is_empty() {
-            self.selected = (self.selected + 1) % self.items.len();
-            self.ensure_selected_visible();
-        }
+        self.selection.move_down();
     }
 
     fn select_prev(&mut self) {
-        if !self.items.is_empty() {
-            if self.selected > 0 {
-                self.selected -= 1;
-            } else {
-                self.selected = self.items.len() - 1;
-            }
-            self.ensure_selected_visible();
-        }
+        self.selection.move_up();
     }
 }
 
@@ -228,8 +206,8 @@ impl Component for Dropdown {
                     Command::none()
                 }
                 KeyCode::Enter => {
-                    if let Some(value) = self.items.get(self.selected).cloned() {
-                        let idx = self.selected;
+                    let idx = self.selection.cursor();
+                    if let Some(value) = self.items.get(idx).cloned() {
                         self.visible = false;
                         Command::message(Message::Selected(idx, value))
                     } else {
@@ -282,10 +260,11 @@ impl Component for Dropdown {
         };
 
         // Render items
+        let offset = self.selection.offset();
         for (i, item) in self
             .items
             .iter()
-            .skip(self.scroll_offset)
+            .skip(offset)
             .take(visible_count)
             .enumerate()
         {
@@ -295,7 +274,7 @@ impl Component for Dropdown {
                 ..inner
             };
 
-            let is_selected = i + self.scroll_offset == self.selected;
+            let is_selected = i + offset == self.selection.cursor();
             let style = if is_selected {
                 self.style.selected_item
             } else {
@@ -447,13 +426,13 @@ mod tests {
         let mut dropdown = Dropdown::new().with_max_visible(2);
         dropdown.set_items(vec!["a".into(), "b".into(), "c".into(), "d".into()]);
 
-        assert_eq!(dropdown.scroll_offset, 0);
+        assert_eq!(dropdown.selection.offset(), 0);
         dropdown.update(Message::KeyPress(key(KeyCode::Down))); // sel=1
-        assert_eq!(dropdown.scroll_offset, 0);
+        assert_eq!(dropdown.selection.offset(), 0);
         dropdown.update(Message::KeyPress(key(KeyCode::Down))); // sel=2, scroll adjusts
-        assert_eq!(dropdown.scroll_offset, 1);
+        assert_eq!(dropdown.selection.offset(), 1);
         dropdown.update(Message::KeyPress(key(KeyCode::Down))); // sel=3
-        assert_eq!(dropdown.scroll_offset, 2);
+        assert_eq!(dropdown.selection.offset(), 2);
     }
 
     #[test]
