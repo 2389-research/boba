@@ -1,7 +1,7 @@
 //! Dropdown select/picker component for choosing from a list of options.
 //!
 //! This is a convenience wrapper that composes a one-line trigger display
-//! with a [`Dropdown`](crate::dropdown::Dropdown) overlay for the actual
+//! with a [`Dropdown`] overlay for the actual
 //! item list and navigation.
 
 use crate::dropdown::{self, Dropdown, DropdownStyle};

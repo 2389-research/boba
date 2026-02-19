@@ -148,7 +148,7 @@ pub enum Message {
 
 /// Configurable key bindings for the list component.
 ///
-/// Each field is a [`Binding`](crate::key::Binding) that maps one or more
+/// Each field is a [`Binding`] that maps one or more
 /// key combinations to an action. The defaults match vim-style navigation.
 /// Override individual fields to customise keys:
 ///
