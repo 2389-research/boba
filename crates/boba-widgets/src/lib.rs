@@ -27,7 +27,6 @@
 //! | [`text_input`] | Single-line text input field |
 //! | [`timer`] | Countdown timer |
 //! | [`viewport`] | Scrollable content viewport |
-//! | [`wizard`] | Multi-step form with progress indicator |
 //!
 //! # Feature-Gated Widgets
 //!
@@ -75,4 +74,3 @@ pub mod text_edit;
 pub mod text_input;
 pub mod timer;
 pub mod viewport;
-pub mod wizard;

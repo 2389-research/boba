@@ -49,3 +49,7 @@ path = "../../examples/file_browser.rs"
 [[example]]
 name = "chat"
 path = "../../examples/chat.rs"
+
+[[example]]
+name = "wizard"
+path = "../../examples/wizard.rs"
