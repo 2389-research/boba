@@ -10,7 +10,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 /// Layout direction for action buttons.
@@ -80,8 +80,6 @@ pub enum Message {
 /// Style configuration for the modal.
 #[derive(Debug, Clone)]
 pub struct ModalStyle {
-    /// Border style for the modal window.
-    pub border: Style,
     /// Style for the title text.
     pub title: Style,
     /// Style for the body text.
@@ -95,7 +93,6 @@ pub struct ModalStyle {
 impl Default for ModalStyle {
     fn default() -> Self {
         Self {
-            border: Style::default().fg(Color::Cyan),
             title: Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
@@ -136,6 +133,8 @@ pub struct Modal {
     fixed_width: Option<u16>,
     /// Optional fixed height in rows (overrides percentage).
     fixed_height: Option<u16>,
+    /// Optional block (border/title container) for the modal.
+    block: Option<Block<'static>>,
 }
 
 impl Modal {
@@ -152,6 +151,7 @@ impl Modal {
             action_layout: ActionLayout::default(),
             fixed_width: None,
             fixed_height: None,
+            block: None,
         }
     }
 
@@ -177,6 +177,12 @@ impl Modal {
     /// Set the style configuration.
     pub fn with_style(mut self, style: ModalStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// Set the block (border/title container) for the modal.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
         self
     }
 
@@ -336,14 +342,13 @@ impl Component for Modal {
         // Clear the area behind the modal
         frame.render_widget(Clear, modal_area);
 
-        let block = Block::default()
-            .title(self.title.as_str())
-            .title_style(self.style.title)
-            .borders(Borders::ALL)
-            .border_style(self.style.border);
-
-        let inner = block.inner(modal_area);
-        frame.render_widget(block, modal_area);
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(modal_area);
+            frame.render_widget(block.clone(), modal_area);
+            inner
+        } else {
+            modal_area
+        };
 
         // Layout: body takes remaining space, actions at bottom
         let has_actions = !self.actions.is_empty();
