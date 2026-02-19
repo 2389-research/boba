@@ -17,7 +17,7 @@
 //! | [`paginator`] | Page-dot indicator for multi-page views |
 //! | [`progress`] | Determinate progress bar |
 //! | [`search`] | Inline search bar with match navigation |
-//! | [`select`] | Single-choice selection menu |
+//! | [`select`] | Single-choice selection menu (composes [`dropdown`]) |
 //! | [`spinner`] | Animated indeterminate spinner |
 //! | [`status_bar`] | Three-section status line (left / center / right) |
 //! | [`stopwatch`] | Elapsed-time stopwatch |
