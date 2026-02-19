@@ -8,7 +8,6 @@
 //!
 //! | Module | Description |
 //! |--------|-------------|
-//! | [`autocomplete`] | Input with filtered dropdown suggestions |
 //! | [`cursor`] | Blinking / styled cursor helper |
 //! | [`dropdown`] | Standalone dropdown overlay for selectable items |
 //! | [`filepicker`] | Interactive file and directory picker |
@@ -48,7 +47,6 @@
 //! | [`selection`] | [`SelectionState`](selection::SelectionState) for shared list navigation |
 //! | [`text_edit`] | [`TextEditState`](text_edit::TextEditState) for shared single-line text editing |
 
-pub mod autocomplete;
 pub mod chat;
 pub mod chrome;
 #[cfg(feature = "syntax-highlighting")]

@@ -2,9 +2,8 @@
 //!
 //! `TextEditState` provides character buffer management, cursor movement,
 //! word-boundary navigation, kill operations, and undo/redo for single-line
-//! text editing. Used internally by [`TextInput`](crate::text_input::TextInput),
-//! [`Autocomplete`](crate::autocomplete::Autocomplete), and
-//! [`Search`](crate::search::Search).
+//! text editing. Used internally by [`TextInput`](crate::text_input::TextInput)
+//! and [`Search`](crate::search::Search).
 
 use std::collections::VecDeque;
 

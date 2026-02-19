@@ -1,8 +1,9 @@
 //! Standalone dropdown overlay for displaying a list of selectable items.
 //!
-//! Unlike [`autocomplete`](crate::autocomplete), this widget has no built-in
-//! text input or filtering — items are managed externally. It renders as a
-//! bordered overlay anchored above or below a given area.
+//! Items are managed externally — there is no built-in text input or
+//! filtering. It renders as a bordered overlay anchored above or below a
+//! given area. See the `autocomplete` example for composing this with a
+//! [`TextInput`](crate::text_input::TextInput).
 
 use crate::selection::SelectionState;
 use boba_core::command::Command;
