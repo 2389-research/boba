@@ -26,7 +26,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 use ratatui::Frame;
 
 /// The role of a chat message sender.
@@ -94,12 +94,6 @@ pub struct ChatStyle {
     pub separator: Style,
     /// Style for the streaming indicator.
     pub streaming_indicator: Style,
-    /// Border style when focused.
-    pub focused_border: Style,
-    /// Border style when unfocused.
-    pub unfocused_border: Style,
-    /// Border style when scroll is locked (user scrolled up).
-    pub locked_border: Style,
     /// User header label (default: "You").
     pub user_label: String,
     /// Assistant header label (default: "Assistant").
@@ -127,9 +121,6 @@ impl Default for ChatStyle {
                 .add_modifier(Modifier::BOLD),
             separator: Style::default().fg(Color::DarkGray),
             streaming_indicator: Style::default().fg(Color::Yellow),
-            focused_border: Style::default().fg(Color::Cyan),
-            unfocused_border: Style::default().fg(Color::DarkGray),
-            locked_border: Style::default().fg(Color::Yellow),
             user_label: "You".to_string(),
             assistant_label: "Assistant".to_string(),
             system_label: "System".to_string(),
@@ -164,6 +155,8 @@ pub struct Chat {
     separator: String,
     /// Whether to render content as markdown (when feature available).
     render_markdown: bool,
+    /// Optional block (border/title container).
+    block: Option<Block<'static>>,
 
     #[cfg(feature = "markdown")]
     markdown_renderer: crate::markdown::Markdown,
@@ -188,6 +181,7 @@ impl Chat {
             spinner_frame: 0,
             separator: "\u{2500}".repeat(5),
             render_markdown: false,
+            block: None,
             #[cfg(feature = "markdown")]
             markdown_renderer: crate::markdown::Markdown::new(),
         }
@@ -196,6 +190,12 @@ impl Chat {
     /// Set the chat style.
     pub fn with_style(mut self, style: ChatStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// Set the block (border/title container) for the chat.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
         self
     }
 
@@ -447,22 +447,14 @@ impl Component for Chat {
 
         let content_height = lines.len() as u16;
 
-        // Build title with scroll info
-        let border_style = if self.focused {
-            if self.scroll_locked {
-                self.style.locked_border
-            } else {
-                self.style.focused_border
-            }
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(area);
+            frame.render_widget(block.clone(), area);
+            inner
         } else {
-            self.style.unfocused_border
+            area
         };
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style);
-
-        let inner = block.inner(area);
         let visible_height = inner.height;
         let max_scroll = content_height.saturating_sub(visible_height);
 
@@ -474,11 +466,10 @@ impl Component for Chat {
         let actual_scroll = max_scroll.saturating_sub(clamped_offset);
 
         let paragraph = Paragraph::new(lines)
-            .block(block)
             .wrap(Wrap { trim: false })
             .scroll((actual_scroll, 0));
 
-        frame.render_widget(paragraph, area);
+        frame.render_widget(paragraph, inner);
     }
 
     fn focused(&self) -> bool {
