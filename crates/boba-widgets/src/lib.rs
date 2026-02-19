@@ -33,7 +33,6 @@
 //!
 //! | Module | Feature | Description |
 //! |--------|---------|-------------|
-//! | [`chat`] | _(none; markdown rendering needs `markdown`)_ | Chat message list with streaming |
 //! | [`code_block`] | `syntax-highlighting` | Syntax-highlighted code block (syntect) |
 //! | [`markdown`] | `markdown` | CommonMark renderer with highlighting |
 //!
@@ -47,7 +46,6 @@
 //! | [`selection`] | [`SelectionState`](selection::SelectionState) for shared list navigation |
 //! | [`text_edit`] | [`TextEditState`](text_edit::TextEditState) for shared single-line text editing |
 
-pub mod chat;
 pub mod chrome;
 #[cfg(feature = "syntax-highlighting")]
 pub mod code_block;
