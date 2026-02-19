@@ -48,6 +48,7 @@
 
 pub mod autocomplete;
 pub mod chat;
+pub mod chrome;
 #[cfg(feature = "syntax-highlighting")]
 pub mod code_block;
 pub mod cursor;
