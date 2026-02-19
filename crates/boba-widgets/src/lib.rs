@@ -46,6 +46,7 @@
 //! | [`key`] | Key-binding helpers and constants |
 //! | [`runeutil`] | Unicode-aware string width and truncation utilities |
 //! | [`selection`] | [`SelectionState`](selection::SelectionState) for shared list navigation |
+//! | [`text_edit`] | [`TextEditState`](text_edit::TextEditState) for shared single-line text editing |
 
 pub mod autocomplete;
 pub mod chat;
@@ -74,6 +75,7 @@ pub mod stopwatch;
 pub mod table;
 pub mod tabs;
 pub mod text_area;
+pub mod text_edit;
 pub mod text_input;
 pub mod timer;
 pub mod viewport;
