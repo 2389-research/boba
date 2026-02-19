@@ -7,7 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{
-    Block, Borders, Cell as RatatuiCell, Row, Table as RatatuiTable, TableState,
+    Block, Cell as RatatuiCell, Row, Table as RatatuiTable, TableState,
 };
 use ratatui::Frame;
 use std::cell::Cell as StdCell;
@@ -149,6 +149,7 @@ pub struct Table {
     title: String,
     visible_height: StdCell<usize>,
     selected_col: Option<usize>,
+    block: Option<Block<'static>>,
     row_style_fn: Option<RowStyleFn>,
     key_seq: boba_core::key_sequence::KeySequenceTracker,
     key_bindings: TableKeyBindings,
@@ -165,10 +166,6 @@ pub struct TableStyle {
     pub normal: Style,
     /// Style applied to the currently highlighted row.
     pub selected: Style,
-    /// Border style when the table has focus.
-    pub focused_border: Style,
-    /// Border style when the table does not have focus.
-    pub unfocused_border: Style,
     /// Symbol rendered to the left of the selected row (e.g. "▸ ").
     pub highlight_symbol: String,
     /// Style applied to the active cell when column navigation is enabled.
@@ -185,8 +182,6 @@ impl Default for TableStyle {
             selected: Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-            focused_border: Style::default().fg(Color::Cyan),
-            unfocused_border: Style::default().fg(Color::DarkGray),
             highlight_symbol: "▸ ".to_string(),
             active_cell: Style::default()
                 .add_modifier(Modifier::BOLD)
@@ -221,6 +216,7 @@ impl Table {
             title: String::new(),
             visible_height: StdCell::new(10),
             selected_col: None,
+            block: None,
             row_style_fn: None,
             key_seq: boba_core::key_sequence::KeySequenceTracker::new(),
             key_bindings: TableKeyBindings::default(),
@@ -267,6 +263,12 @@ impl Table {
     /// Set the table border title.
     pub fn with_title(mut self, title: impl Into<String>) -> Self {
         self.title = title.into();
+        self
+    }
+
+    /// Set an optional block (border/chrome) around the table.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
         self
     }
 
@@ -528,22 +530,16 @@ impl Component for Table {
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
-        let border_style = if self.focus {
-            self.style.focused_border
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(area);
+            frame.render_widget(block.clone(), area);
+            inner
         } else {
-            self.style.unfocused_border
+            area
         };
 
-        let mut block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style);
-
-        if !self.title.is_empty() {
-            block = block.title(self.title.as_str());
-        }
-
-        // Track visible height for page navigation (border top/bottom + header + margin).
-        let inner_height = block.inner(area).height as usize;
+        // Track visible height for page navigation (header + margin).
+        let inner_height = inner.height as usize;
         // header row (1) + bottom margin (1) = 2 rows consumed by header
         let data_height = inner_height.saturating_sub(2);
         self.visible_height
@@ -595,11 +591,10 @@ impl Component for Table {
 
         let table = RatatuiTable::new(rows, &self.widths)
             .header(header)
-            .block(block)
             .row_highlight_style(self.style.selected)
             .highlight_symbol(self.style.highlight_symbol.as_str());
 
-        frame.render_stateful_widget(table, area, &mut self.state.clone());
+        frame.render_stateful_widget(table, inner, &mut self.state.clone());
     }
 
     fn focused(&self) -> bool {
