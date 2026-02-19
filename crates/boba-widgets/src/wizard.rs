@@ -30,7 +30,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::Frame;
 
 /// Transition returned by a step's key handler.
@@ -90,8 +90,6 @@ pub enum Message {
 /// Style configuration for the wizard.
 #[derive(Debug, Clone)]
 pub struct WizardStyle {
-    /// Border style.
-    pub border: Style,
     /// Title style.
     pub title: Style,
     /// Progress bar filled style.
@@ -107,7 +105,6 @@ pub struct WizardStyle {
 impl Default for WizardStyle {
     fn default() -> Self {
         Self {
-            border: Style::default().fg(Color::Cyan),
             title: Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
@@ -128,6 +125,8 @@ pub struct Wizard {
     width_percent: u16,
     /// Height as a percentage of the terminal (0-100).
     height_percent: u16,
+    /// Optional block (border/title container).
+    block: Option<Block<'static>>,
 }
 
 impl Wizard {
@@ -139,12 +138,19 @@ impl Wizard {
             style: WizardStyle::default(),
             width_percent: 70,
             height_percent: 60,
+            block: None,
         }
     }
 
     /// Set the style.
     pub fn with_style(mut self, style: WizardStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// Set the block (border/title container) for the wizard.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
         self
     }
 
@@ -258,14 +264,13 @@ impl Component for Wizard {
         let wizard_area = self.centered_rect(area);
         frame.render_widget(Clear, wizard_area);
 
-        let block = Block::default()
-            .title(self.current_title())
-            .title_style(self.style.title)
-            .borders(Borders::ALL)
-            .border_style(self.style.border);
-
-        let inner = block.inner(wizard_area);
-        frame.render_widget(block, wizard_area);
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(wizard_area);
+            frame.render_widget(block.clone(), wizard_area);
+            inner
+        } else {
+            wizard_area
+        };
 
         // Layout: progress (1 line) + gap + content + gap + nav hints (1 line)
         let chunks = Layout::default()
