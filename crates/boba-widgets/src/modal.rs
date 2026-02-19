@@ -10,8 +10,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 use ratatui::Frame;
+
+use crate::overlay;
 
 /// Layout direction for action buttons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -228,36 +230,6 @@ impl Modal {
         &self.title
     }
 
-    /// Compute a centered rect within the given area.
-    fn centered_rect(&self, area: Rect) -> Rect {
-        if let (Some(w), Some(h)) = (self.fixed_width, self.fixed_height) {
-            let width = w.min(area.width);
-            let height = h.min(area.height);
-            let x = area.x + (area.width.saturating_sub(width)) / 2;
-            let y = area.y + (area.height.saturating_sub(height)) / 2;
-            Rect::new(x, y, width, height)
-        } else {
-            let v_margin = ((100 - self.height_percent) / 2).max(1);
-            let h_margin = ((100 - self.width_percent) / 2).max(1);
-            let vertical = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Percentage(v_margin),
-                    Constraint::Percentage(self.height_percent),
-                    Constraint::Percentage(v_margin),
-                ])
-                .split(area);
-            let horizontal = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(h_margin),
-                    Constraint::Percentage(self.width_percent),
-                    Constraint::Percentage(h_margin),
-                ])
-                .split(vertical[1]);
-            horizontal[1]
-        }
-    }
 }
 
 impl Component for Modal {
@@ -337,18 +309,12 @@ impl Component for Modal {
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
-        let modal_area = self.centered_rect(area);
-
-        // Clear the area behind the modal
-        frame.render_widget(Clear, modal_area);
-
-        let inner = if let Some(ref block) = self.block {
-            let inner = block.inner(modal_area);
-            frame.render_widget(block.clone(), modal_area);
-            inner
+        let modal_area = if let (Some(w), Some(h)) = (self.fixed_width, self.fixed_height) {
+            overlay::centered_fixed(w, h, area)
         } else {
-            modal_area
+            overlay::centered_rect(self.width_percent, self.height_percent, area)
         };
+        let inner = overlay::render_overlay(frame, modal_area, self.block.as_ref());
 
         // Layout: body takes remaining space, actions at bottom
         let has_actions = !self.actions.is_empty();
