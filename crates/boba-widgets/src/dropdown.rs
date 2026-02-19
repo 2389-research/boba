@@ -10,7 +10,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::Frame;
 
 /// Position of the dropdown relative to its anchor area.
@@ -30,8 +30,6 @@ pub struct DropdownStyle {
     pub item: Style,
     /// Style for the currently selected item.
     pub selected_item: Style,
-    /// Border style.
-    pub border: Style,
 }
 
 impl Default for DropdownStyle {
@@ -41,7 +39,6 @@ impl Default for DropdownStyle {
             selected_item: Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-            border: Style::default().fg(Color::DarkGray),
         }
     }
 }
@@ -78,6 +75,7 @@ pub struct Dropdown {
     style: DropdownStyle,
     position: Position,
     visible: bool,
+    block: Option<Block<'static>>,
 }
 
 impl Dropdown {
@@ -92,6 +90,7 @@ impl Dropdown {
             style: DropdownStyle::default(),
             position: Position::default(),
             visible: false,
+            block: None,
         }
     }
 
@@ -116,6 +115,12 @@ impl Dropdown {
     /// Set the position relative to the anchor.
     pub fn with_position(mut self, position: Position) -> Self {
         self.position = position;
+        self
+    }
+
+    /// Set the block (border/title container) for the dropdown.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
         self
     }
 
@@ -243,7 +248,11 @@ impl Component for Dropdown {
         }
 
         let visible_count = self.items.len().min(self.max_visible);
-        let dropdown_height = visible_count as u16 + 2; // +2 for borders
+        let dropdown_height = if self.block.is_some() {
+            visible_count as u16 + 2 // +2 for borders
+        } else {
+            visible_count as u16
+        };
 
         let dropdown_area = match self.position {
             Position::Above => {
@@ -257,22 +266,20 @@ impl Component for Dropdown {
             }
         };
 
-        if dropdown_area.height < 3 || dropdown_area.width < 4 {
+        if dropdown_area.height == 0 || dropdown_area.width < 4 {
             return; // not enough space
         }
 
         // Clear area behind dropdown
         frame.render_widget(Clear, dropdown_area);
 
-        // Render border
-        let mut block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.style.border);
-        if !self.title.is_empty() {
-            block = block.title(self.title.clone());
-        }
-        let inner = block.inner(dropdown_area);
-        frame.render_widget(block, dropdown_area);
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(dropdown_area);
+            frame.render_widget(block.clone(), dropdown_area);
+            inner
+        } else {
+            dropdown_area
+        };
 
         // Render items
         for (i, item) in self
