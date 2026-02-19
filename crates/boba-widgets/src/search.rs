@@ -27,6 +27,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
+use crate::text_edit::TextEditState;
+
 /// Messages emitted by the search component.
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -75,8 +77,7 @@ impl Default for SearchStyle {
 /// Inline search bar with match navigation.
 pub struct Search {
     active: bool,
-    query: String,
-    cursor_pos: usize,
+    editor: TextEditState,
     matches: Vec<usize>,
     current_match: usize,
     style: SearchStyle,
@@ -94,8 +95,7 @@ impl Search {
     pub fn new() -> Self {
         Self {
             active: false,
-            query: String::new(),
-            cursor_pos: 0,
+            editor: TextEditState::new(),
             matches: Vec::new(),
             current_match: 0,
             style: SearchStyle::default(),
@@ -123,8 +123,7 @@ impl Search {
     /// Activate the search bar programmatically.
     pub fn activate(&mut self) {
         self.active = true;
-        self.query.clear();
-        self.cursor_pos = 0;
+        self.editor.reset();
         self.matches.clear();
         self.current_match = 0;
     }
@@ -132,14 +131,14 @@ impl Search {
     /// Deactivate the search bar.
     pub fn deactivate(&mut self) {
         self.active = false;
-        self.query.clear();
+        self.editor.reset();
         self.matches.clear();
         self.current_match = 0;
     }
 
     /// Get the current search query.
-    pub fn query(&self) -> &str {
-        &self.query
+    pub fn query(&self) -> String {
+        self.editor.value()
     }
 
     /// Set the match indices (call this whenever the query or content changes).
@@ -188,18 +187,6 @@ impl Search {
         }
     }
 
-    /// Convert a char index to a byte offset in the query string.
-    fn byte_offset(s: &str, char_idx: usize) -> usize {
-        s.char_indices()
-            .nth(char_idx)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len())
-    }
-
-    /// Number of characters in the query.
-    fn char_len(&self) -> usize {
-        self.query.chars().count()
-    }
 }
 
 impl Component for Search {
@@ -241,35 +228,25 @@ impl Component for Search {
                         }
                     }
                     (KeyCode::Backspace, _) => {
-                        if self.query.is_empty() {
+                        if self.editor.is_empty() {
                             self.deactivate();
                             Command::message(Message::Dismissed)
                         } else {
-                            if self.cursor_pos > 0 {
-                                self.cursor_pos -= 1;
-                                let byte_pos = Self::byte_offset(&self.query, self.cursor_pos);
-                                self.query.remove(byte_pos);
-                            }
-                            Command::message(Message::QueryChanged(self.query.clone()))
+                            self.editor.delete_back();
+                            Command::message(Message::QueryChanged(self.editor.value()))
                         }
                     }
                     (KeyCode::Left, _) => {
-                        if self.cursor_pos > 0 {
-                            self.cursor_pos -= 1;
-                        }
+                        self.editor.move_left();
                         Command::none()
                     }
                     (KeyCode::Right, _) => {
-                        if self.cursor_pos < self.char_len() {
-                            self.cursor_pos += 1;
-                        }
+                        self.editor.move_right();
                         Command::none()
                     }
                     (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
-                        let byte_pos = Self::byte_offset(&self.query, self.cursor_pos);
-                        self.query.insert(byte_pos, c);
-                        self.cursor_pos += 1;
-                        Command::message(Message::QueryChanged(self.query.clone()))
+                        self.editor.insert_char(c);
+                        Command::message(Message::QueryChanged(self.editor.value()))
                     }
                     _ => Command::none(),
                 }
@@ -296,22 +273,21 @@ impl Component for Search {
         ));
 
         // Query text with cursor
-        if self.query.is_empty() {
+        let chars = self.editor.chars();
+        let cursor = self.editor.cursor();
+        if chars.is_empty() {
             spans.push(Span::styled(" ", self.style.cursor));
         } else {
-            let byte_pos = Self::byte_offset(&self.query, self.cursor_pos);
-            let char_count = self.query.chars().count();
-            let before = &self.query[..byte_pos];
+            let before: String = chars[..cursor].iter().collect();
             if !before.is_empty() {
-                spans.push(Span::styled(before.to_string(), self.style.text));
+                spans.push(Span::styled(before, self.style.text));
             }
-            if self.cursor_pos < char_count {
-                let next_byte = Self::byte_offset(&self.query, self.cursor_pos + 1);
-                let cursor_char = &self.query[byte_pos..next_byte];
-                spans.push(Span::styled(cursor_char.to_string(), self.style.cursor));
-                let after = &self.query[next_byte..];
+            if cursor < chars.len() {
+                let cursor_char: String = chars[cursor..cursor + 1].iter().collect();
+                spans.push(Span::styled(cursor_char, self.style.cursor));
+                let after: String = chars[cursor + 1..].iter().collect();
                 if !after.is_empty() {
-                    spans.push(Span::styled(after.to_string(), self.style.text));
+                    spans.push(Span::styled(after, self.style.text));
                 }
             } else {
                 spans.push(Span::styled(" ", self.style.cursor));
@@ -320,7 +296,7 @@ impl Component for Search {
 
         // Match counter
         spans.push(Span::raw("  "));
-        if self.query.is_empty() {
+        if self.editor.is_empty() {
             // Don't show counter for empty query
         } else if self.matches.is_empty() {
             spans.push(Span::styled("No matches", self.style.no_matches));
@@ -500,13 +476,13 @@ mod tests {
         search.update(Message::KeyPress(key(KeyCode::Char('f'))));
         search.update(Message::KeyPress(key(KeyCode::Char('é'))));
         assert_eq!(search.query(), "café");
-        assert_eq!(search.cursor_pos, 4); // 4 chars
+        assert_eq!(search.editor.cursor(), 4); // 4 chars
 
         // Move left, then right
         search.update(Message::KeyPress(key(KeyCode::Left)));
-        assert_eq!(search.cursor_pos, 3);
+        assert_eq!(search.editor.cursor(), 3);
         search.update(Message::KeyPress(key(KeyCode::Right)));
-        assert_eq!(search.cursor_pos, 4);
+        assert_eq!(search.editor.cursor(), 4);
 
         // Backspace the 'é'
         search.update(Message::KeyPress(key(KeyCode::Backspace)));
