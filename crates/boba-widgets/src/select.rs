@@ -1,5 +1,6 @@
 //! Dropdown select/picker component for choosing from a list of options.
 
+use crate::selection::SelectionState;
 use boba_core::command::Command;
 use boba_core::component::Component;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -27,7 +28,7 @@ pub enum Message {
 pub struct Select {
     options: Vec<String>,
     selected: Option<usize>,
-    cursor: usize,
+    selection: SelectionState,
     open: bool,
     focus: bool,
     title: String,
@@ -63,10 +64,11 @@ impl Default for SelectStyle {
 impl Select {
     /// Create a new select component with the given list of options.
     pub fn new(options: Vec<String>) -> Self {
+        let selection = SelectionState::new(options.len(), 10);
         Self {
             options,
             selected: None,
-            cursor: 0,
+            selection,
             open: false,
             focus: false,
             title: String::new(),
@@ -139,26 +141,19 @@ impl Component for Select {
                 if self.open && !self.options.is_empty() {
                     match key.code {
                         KeyCode::Up | KeyCode::Char('k') => {
-                            if self.cursor > 0 {
-                                self.cursor -= 1;
-                            } else {
-                                self.cursor = self.options.len().saturating_sub(1);
-                            }
+                            self.selection.move_up();
                             Command::none()
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
-                            if self.cursor + 1 >= self.options.len() {
-                                self.cursor = 0;
-                            } else {
-                                self.cursor += 1;
-                            }
+                            self.selection.move_down();
                             Command::none()
                         }
                         KeyCode::Enter => {
-                            self.selected = Some(self.cursor);
+                            let cursor = self.selection.cursor();
+                            self.selected = Some(cursor);
                             self.open = false;
-                            let value = self.options[self.cursor].clone();
-                            Command::message(Message::Selected(self.cursor, value))
+                            let value = self.options[cursor].clone();
+                            Command::message(Message::Selected(cursor, value))
                         }
                         KeyCode::Esc => {
                             self.open = false;
@@ -171,7 +166,7 @@ impl Component for Select {
                         KeyCode::Enter | KeyCode::Char(' ') => {
                             self.open = true;
                             if let Some(i) = self.selected {
-                                self.cursor = i;
+                                self.selection.select(i);
                             }
                             Command::none()
                         }
@@ -233,7 +228,7 @@ impl Component for Select {
                     .collect();
 
                 let mut state = ListState::default();
-                state.select(Some(self.cursor));
+                state.select(Some(self.selection.cursor()));
 
                 let mut list = List::new(items)
                     .highlight_style(self.style.selected)
