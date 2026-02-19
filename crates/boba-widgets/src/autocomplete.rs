@@ -23,6 +23,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::Frame;
 
+use crate::text_edit::TextEditState;
+
 /// Messages for the autocomplete component.
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -67,8 +69,7 @@ impl Default for AutocompleteStyle {
 
 /// Autocomplete input component.
 pub struct Autocomplete {
-    value: String,
-    cursor_pos: usize,
+    editor: TextEditState,
     suggestions: Vec<String>,
     filtered: Vec<String>,
     selected: usize,
@@ -91,8 +92,7 @@ impl Autocomplete {
     /// Create a new autocomplete input.
     pub fn new() -> Self {
         Self {
-            value: String::new(),
-            cursor_pos: 0,
+            editor: TextEditState::new(),
             suggestions: Vec::new(),
             filtered: Vec::new(),
             selected: 0,
@@ -137,14 +137,14 @@ impl Autocomplete {
     }
 
     /// Get the current input value.
-    pub fn value(&self) -> &str {
-        &self.value
+    pub fn value(&self) -> String {
+        self.editor.value()
     }
 
     /// Set the input value programmatically.
     pub fn set_value(&mut self, value: impl Into<String>) {
-        self.value = value.into();
-        self.cursor_pos = self.value.chars().count();
+        let v: String = value.into();
+        self.editor.set_value(&v);
         self.update_filtered();
     }
 
@@ -173,10 +173,10 @@ impl Autocomplete {
     }
 
     fn update_filtered(&mut self) {
-        if self.value.is_empty() {
+        if self.editor.is_empty() {
             self.filtered = self.suggestions.clone();
         } else {
-            let query = self.value.to_lowercase();
+            let query = self.editor.value().to_lowercase();
             self.filtered = self
                 .suggestions
                 .iter()
@@ -197,18 +197,6 @@ impl Autocomplete {
         }
     }
 
-    /// Convert a char index to a byte offset in a string.
-    fn byte_offset(s: &str, char_idx: usize) -> usize {
-        s.char_indices()
-            .nth(char_idx)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len())
-    }
-
-    /// Number of characters in the value.
-    fn char_len(&self) -> usize {
-        self.value.chars().count()
-    }
 }
 
 impl Component for Autocomplete {
@@ -241,8 +229,7 @@ impl Component for Autocomplete {
                 }
                 (KeyCode::Tab, _) | (KeyCode::Enter, _) if self.dropdown_visible => {
                     if let Some(suggestion) = self.filtered.get(self.selected).cloned() {
-                        self.value = suggestion.clone();
-                        self.cursor_pos = self.value.chars().count();
+                        self.editor.set_value(&suggestion);
                         self.dropdown_visible = false;
                         Command::message(Message::Accepted(suggestion))
                     } else {
@@ -250,42 +237,33 @@ impl Component for Autocomplete {
                     }
                 }
                 (KeyCode::Backspace, _) => {
-                    if self.cursor_pos > 0 {
-                        self.cursor_pos -= 1;
-                        let byte_pos = Self::byte_offset(&self.value, self.cursor_pos);
-                        self.value.remove(byte_pos);
+                    if self.editor.delete_back() {
                         self.update_filtered();
-                        Command::message(Message::InputChanged(self.value.clone()))
+                        Command::message(Message::InputChanged(self.editor.value()))
                     } else {
                         Command::none()
                     }
                 }
                 (KeyCode::Left, _) => {
-                    if self.cursor_pos > 0 {
-                        self.cursor_pos -= 1;
-                    }
+                    self.editor.move_left();
                     Command::none()
                 }
                 (KeyCode::Right, _) => {
-                    if self.cursor_pos < self.char_len() {
-                        self.cursor_pos += 1;
-                    }
+                    self.editor.move_right();
                     Command::none()
                 }
                 (KeyCode::Home, _) => {
-                    self.cursor_pos = 0;
+                    self.editor.move_home();
                     Command::none()
                 }
                 (KeyCode::End, _) => {
-                    self.cursor_pos = self.char_len();
+                    self.editor.move_end();
                     Command::none()
                 }
                 (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
-                    let byte_pos = Self::byte_offset(&self.value, self.cursor_pos);
-                    self.value.insert(byte_pos, c);
-                    self.cursor_pos += 1;
+                    self.editor.insert_char(c);
                     self.update_filtered();
-                    Command::message(Message::InputChanged(self.value.clone()))
+                    Command::message(Message::InputChanged(self.editor.value()))
                 }
                 _ => Command::none(),
             },
@@ -307,22 +285,21 @@ impl Component for Autocomplete {
         }
 
         // Value with cursor
-        if self.value.is_empty() {
+        let chars = self.editor.chars();
+        let cursor = self.editor.cursor();
+        if chars.is_empty() {
             spans.push(Span::styled(" ", self.style.cursor));
         } else {
-            let byte_pos = Self::byte_offset(&self.value, self.cursor_pos);
-            let char_count = self.value.chars().count();
-            let before = &self.value[..byte_pos];
+            let before: String = chars[..cursor].iter().collect();
             if !before.is_empty() {
-                spans.push(Span::styled(before.to_string(), self.style.input));
+                spans.push(Span::styled(before, self.style.input));
             }
-            if self.cursor_pos < char_count {
-                let next_byte = Self::byte_offset(&self.value, self.cursor_pos + 1);
-                let cursor_char = &self.value[byte_pos..next_byte];
-                spans.push(Span::styled(cursor_char.to_string(), self.style.cursor));
-                let after = &self.value[next_byte..];
+            if cursor < chars.len() {
+                let cursor_char: String = chars[cursor..cursor + 1].iter().collect();
+                spans.push(Span::styled(cursor_char, self.style.cursor));
+                let after: String = chars[cursor + 1..].iter().collect();
                 if !after.is_empty() {
-                    spans.push(Span::styled(after.to_string(), self.style.input));
+                    spans.push(Span::styled(after, self.style.input));
                 }
             } else {
                 spans.push(Span::styled(" ", self.style.cursor));
@@ -501,12 +478,12 @@ mod tests {
         // Type multi-byte: "é"
         ac.update(Message::KeyPress(key(KeyCode::Char('é'))));
         assert_eq!(ac.value(), "é");
-        assert_eq!(ac.cursor_pos, 1);
+        assert_eq!(ac.editor.cursor(), 1);
 
         // Backspace removes it
         ac.update(Message::KeyPress(key(KeyCode::Backspace)));
         assert_eq!(ac.value(), "");
-        assert_eq!(ac.cursor_pos, 0);
+        assert_eq!(ac.editor.cursor(), 0);
 
         // Type "café" and navigate
         ac.update(Message::KeyPress(key(KeyCode::Char('c'))));
@@ -518,7 +495,7 @@ mod tests {
         // Left then right
         ac.update(Message::KeyPress(key(KeyCode::Left)));
         ac.update(Message::KeyPress(key(KeyCode::Right)));
-        assert_eq!(ac.cursor_pos, 4);
+        assert_eq!(ac.editor.cursor(), 4);
     }
 
     #[test]
