@@ -6,9 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph,
-};
+use ratatui::widgets::{Block, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 /// Messages for the select component.
@@ -35,6 +33,8 @@ pub struct Select {
     title: String,
     placeholder: String,
     style: SelectStyle,
+    block: Option<Block<'static>>,
+    dropdown_block: Option<Block<'static>>,
 }
 
 /// Visual style configuration for the [`Select`] component.
@@ -44,12 +44,6 @@ pub struct SelectStyle {
     pub normal: Style,
     /// Style applied to the currently highlighted/selected option.
     pub selected: Style,
-    /// Border style when the select component has focus.
-    pub focused_border: Style,
-    /// Border style when the select component does not have focus.
-    pub unfocused_border: Style,
-    /// Border style for the dropdown overlay.
-    pub dropdown_border: Style,
     /// Symbol displayed next to the highlighted option in the dropdown.
     pub highlight_symbol: String,
 }
@@ -61,9 +55,6 @@ impl Default for SelectStyle {
             selected: Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-            focused_border: Style::default().fg(Color::Cyan),
-            unfocused_border: Style::default().fg(Color::DarkGray),
-            dropdown_border: Style::default().fg(Color::Cyan),
             highlight_symbol: "▸ ".to_string(),
         }
     }
@@ -81,6 +72,8 @@ impl Select {
             title: String::new(),
             placeholder: "Select...".to_string(),
             style: SelectStyle::default(),
+            block: None,
+            dropdown_block: None,
         }
     }
 
@@ -99,6 +92,18 @@ impl Select {
     /// Set the visual style for this select component.
     pub fn with_style(mut self, style: SelectStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// Set the block (border/title container) for the trigger area.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
+        self
+    }
+
+    /// Set the block (border/title container) for the dropdown overlay.
+    pub fn with_dropdown_block(mut self, block: Block<'static>) -> Self {
+        self.dropdown_block = Some(block);
         self
     }
 
@@ -187,19 +192,13 @@ impl Component for Select {
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
-        let border_style = if self.focus {
-            self.style.focused_border
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(area);
+            frame.render_widget(block.clone(), area);
+            inner
         } else {
-            self.style.unfocused_border
+            area
         };
-
-        let mut block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style);
-
-        if !self.title.is_empty() {
-            block = block.title(self.title.as_str());
-        }
 
         let display_text = if let Some(i) = self.selected {
             Span::styled(&self.options[i], self.style.normal)
@@ -213,8 +212,8 @@ impl Component for Select {
             Span::styled(arrow, Style::default().fg(Color::DarkGray)),
         ]);
 
-        let paragraph = Paragraph::new(line).block(block);
-        frame.render_widget(paragraph, area);
+        let paragraph = Paragraph::new(line);
+        frame.render_widget(paragraph, inner);
 
         // Render dropdown overlay when open
         if self.open {
@@ -236,15 +235,13 @@ impl Component for Select {
                 let mut state = ListState::default();
                 state.select(Some(self.cursor));
 
-                let list = List::new(items)
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(self.style.dropdown_border),
-                    )
+                let mut list = List::new(items)
                     .highlight_style(self.style.selected)
                     .highlight_symbol(self.style.highlight_symbol.as_str())
                     .highlight_spacing(HighlightSpacing::Always);
+                if let Some(ref block) = self.dropdown_block {
+                    list = list.block(block.clone());
+                }
 
                 frame.render_stateful_widget(list, dropdown_area, &mut state);
             }
