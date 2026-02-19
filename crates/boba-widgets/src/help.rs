@@ -8,7 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 /// Messages for the help component.
@@ -35,6 +35,7 @@ pub struct Help {
     ellipsis: String,
     scroll_offset: usize,
     visible_height: Cell<u16>,
+    block: Option<Block<'static>>,
 }
 
 /// A single keybinding entry displayed in the help overlay.
@@ -57,8 +58,6 @@ pub struct HelpStyle {
     pub description: Style,
     /// Style applied to group headings.
     pub group: Style,
-    /// Style applied to the overlay border.
-    pub border: Style,
     /// Style applied to the overlay title.
     pub title: Style,
 }
@@ -73,7 +72,6 @@ impl Default for HelpStyle {
             group: Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
-            border: Style::default().fg(Color::DarkGray),
             title: Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
@@ -93,6 +91,7 @@ impl Help {
             ellipsis: "\u{2026}".to_string(), // "…"
             scroll_offset: 0,
             visible_height: Cell::new(24),
+            block: None,
         }
     }
 
@@ -118,6 +117,12 @@ impl Help {
     /// with the configured ellipsis if it exceeds this width.
     pub fn with_max_width(mut self, w: u16) -> Self {
         self.max_width = Some(w);
+        self
+    }
+
+    /// Set the block (border/title container) for the help overlay.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
         self
     }
 
@@ -331,25 +336,26 @@ impl Component for Help {
             ]));
         }
 
-        let block = Block::default()
-            .title(" Help ")
-            .title_style(self.style.title)
-            .borders(Borders::ALL)
-            .border_style(self.style.border);
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(overlay);
+            frame.render_widget(block.clone(), overlay);
+            inner
+        } else {
+            overlay
+        };
 
         // Update visible_height via interior mutability.
-        let inner_height = block.inner(overlay).height as usize;
+        let inner_height = inner.height as usize;
         self.visible_height.set(inner_height as u16);
         let total_lines = lines.len();
         let max_scroll = total_lines.saturating_sub(inner_height);
         let offset = self.scroll_offset.min(max_scroll);
 
         let paragraph = Paragraph::new(lines)
-            .block(block)
             .wrap(Wrap { trim: false })
             .scroll((offset as u16, 0));
 
-        frame.render_widget(paragraph, overlay);
+        frame.render_widget(paragraph, inner);
     }
 }
 
