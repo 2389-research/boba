@@ -20,7 +20,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::Frame;
 
 /// Messages for the autocomplete component.
@@ -49,8 +49,6 @@ pub struct AutocompleteStyle {
     pub item: Style,
     /// Style for the selected dropdown item.
     pub selected_item: Style,
-    /// Style for the dropdown border.
-    pub dropdown_border: Style,
 }
 
 impl Default for AutocompleteStyle {
@@ -63,7 +61,6 @@ impl Default for AutocompleteStyle {
             selected_item: Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-            dropdown_border: Style::default().fg(Color::DarkGray),
         }
     }
 }
@@ -81,6 +78,7 @@ pub struct Autocomplete {
     style: AutocompleteStyle,
     prompt: String,
     focused: bool,
+    dropdown_block: Option<Block<'static>>,
 }
 
 impl Default for Autocomplete {
@@ -104,6 +102,7 @@ impl Autocomplete {
             style: AutocompleteStyle::default(),
             prompt: String::new(),
             focused: false,
+            dropdown_block: None,
         }
     }
 
@@ -122,6 +121,12 @@ impl Autocomplete {
     /// Set the style.
     pub fn with_style(mut self, style: AutocompleteStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// Set the block (border/title container) for the dropdown overlay.
+    pub fn with_dropdown_block(mut self, block: Block<'static>) -> Self {
+        self.dropdown_block = Some(block);
         self
     }
 
@@ -330,7 +335,11 @@ impl Component for Autocomplete {
         // Dropdown (below the input, if visible and we have space)
         if self.dropdown_visible && area.height > 1 {
             let visible_count = self.filtered.len().min(self.max_visible);
-            let dropdown_height = (visible_count as u16 + 2).min(area.height - 1); // +2 for borders
+            let dropdown_height = if self.dropdown_block.is_some() {
+                (visible_count as u16 + 2).min(area.height - 1) // +2 for borders
+            } else {
+                (visible_count as u16).min(area.height - 1)
+            };
             let dropdown_area = Rect {
                 x: area.x,
                 y: area.y + 1,
@@ -340,11 +349,13 @@ impl Component for Autocomplete {
 
             frame.render_widget(Clear, dropdown_area);
 
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(self.style.dropdown_border);
-            let inner = block.inner(dropdown_area);
-            frame.render_widget(block, dropdown_area);
+            let inner = if let Some(ref block) = self.dropdown_block {
+                let inner = block.inner(dropdown_area);
+                frame.render_widget(block.clone(), dropdown_area);
+                inner
+            } else {
+                dropdown_area
+            };
 
             // Render visible items
             let end = (self.scroll_offset + self.max_visible).min(self.filtered.len());
