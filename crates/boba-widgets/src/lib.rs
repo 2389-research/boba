@@ -41,6 +41,7 @@
 //! |--------|-------------|
 //! | [`focus`] | [`FocusGroup`](focus::FocusGroup) for managing focus across multiple components |
 //! | [`key`] | Key-binding helpers and constants |
+//! | [`overlay`] | Overlay positioning and rendering utilities |
 //! | [`runeutil`] | Unicode-aware string width and truncation utilities |
 //! | [`selection`] | [`SelectionState`](selection::SelectionState) for shared list navigation |
 //! | [`text_edit`] | [`TextEditState`](text_edit::TextEditState) for shared single-line text editing |
@@ -58,6 +59,7 @@ pub mod list;
 #[cfg(feature = "markdown")]
 pub mod markdown;
 pub mod modal;
+pub mod overlay;
 pub mod paginator;
 pub mod progress;
 pub mod runeutil;
