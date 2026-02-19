@@ -14,6 +14,7 @@ use boba::ratatui::style::{Color, Modifier, Style};
 use boba::ratatui::text::{Line, Span};
 use boba::ratatui::widgets::{Block, Borders, Paragraph};
 use boba::ratatui::Frame;
+use boba::widgets::chrome::focus_block;
 use boba::widgets::focus::FocusGroup;
 use boba::widgets::text_input::{self, EchoMode, TextInput};
 use boba::{terminal_events, Command, Component, Model, Subscription, TerminalEvent};
@@ -132,8 +133,15 @@ impl Model for FormApp {
         ])
         .areas(form_area);
 
-        self.username.view(frame, user_area);
-        self.password.view(frame, pass_area);
+        let block = focus_block("Username", self.username.focused());
+        let inner = block.inner(user_area);
+        frame.render_widget(block, user_area);
+        self.username.view(frame, inner);
+
+        let block = focus_block("Password", self.password.focused());
+        let inner = block.inner(pass_area);
+        frame.render_widget(block, pass_area);
+        self.password.view(frame, inner);
 
         // Submit button
         let submit_style = if self.focus.focused() == 2 {

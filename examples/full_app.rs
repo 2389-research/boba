@@ -14,6 +14,7 @@ use boba::ratatui::style::{Color, Modifier, Style};
 use boba::ratatui::text::{Line, Span};
 use boba::ratatui::widgets::{Block, Borders, Paragraph};
 use boba::ratatui::Frame;
+use boba::widgets::chrome::focus_block;
 use boba::widgets::help::{self, Help};
 use boba::widgets::list::{self, List};
 use boba::widgets::tabs::{self, Tabs};
@@ -147,8 +148,15 @@ impl Model for FullApp {
                     Layout::horizontal([Constraint::Percentage(30), Constraint::Percentage(70)])
                         .areas(main_area);
 
-                self.items.view(frame, list_area);
-                self.content.view(frame, content_area);
+                let block = focus_block("Items", self.items.focused());
+                let inner = block.inner(list_area);
+                frame.render_widget(block, list_area);
+                self.items.view(frame, inner);
+
+                let block = focus_block("Content", self.content.focused());
+                let inner = block.inner(content_area);
+                frame.render_widget(block, content_area);
+                self.content.view(frame, inner);
             }
             _ => {
                 let about = Paragraph::new(vec![
