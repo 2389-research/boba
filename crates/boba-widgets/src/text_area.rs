@@ -906,13 +906,12 @@ impl Component for TextArea {
                         // History browsing: when buffer is a single line and
                         // cursor is on the first row, browse history instead
                         // of moving the cursor.
-                        if self.lines.len() == 1 && self.cursor_row == 0 && self.history.is_some() {
+                        if self.lines.len() == 1 && self.cursor_row == 0 {
                             let current = self.value();
                             let entry = self
                                 .history
                                 .as_mut()
-                                .unwrap()
-                                .older(&current)
+                                .and_then(|h| h.older(&current))
                                 .map(|s| s.to_owned());
                             if let Some(entry) = entry {
                                 self.lines = vec![entry.chars().collect()];
