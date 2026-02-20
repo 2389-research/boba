@@ -97,13 +97,8 @@ pub trait ItemDelegate<I: Item>: Send {
     /// - `index`: original index in the items list
     /// - `selected`: whether this item is currently selected
     /// - `width`: available width in columns
-    fn render<'a>(
-        &'a self,
-        item: &'a I,
-        index: usize,
-        selected: bool,
-        width: u16,
-    ) -> Vec<Line<'a>>;
+    fn render<'a>(&'a self, item: &'a I, index: usize, selected: bool, width: u16)
+        -> Vec<Line<'a>>;
 }
 
 /// Default delegate that renders [`Item::filter_value`] as the label
@@ -120,10 +115,7 @@ impl<I: Item> ItemDelegate<I> for DefaultDelegate {
     ) -> Vec<Line<'a>> {
         let mut lines = vec![Line::raw(item.filter_value())];
         if let Some(desc) = item.description() {
-            lines.push(Line::styled(
-                desc,
-                Style::default().fg(Color::DarkGray),
-            ));
+            lines.push(Line::styled(desc, Style::default().fg(Color::DarkGray)));
         }
         lines
     }
@@ -856,8 +848,7 @@ impl<I: Item> Component for List<I> {
             .iter()
             .enumerate()
             .map(|(pos, &i)| {
-                let selected = !self.filtered_indices.is_empty()
-                    && pos == self.selection.cursor();
+                let selected = !self.filtered_indices.is_empty() && pos == self.selection.cursor();
                 let lines = self
                     .delegate
                     .render(&self.items[i], i, selected, list_area.width);

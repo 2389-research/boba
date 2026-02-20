@@ -205,9 +205,7 @@ impl Model for WizardApp {
                 let text = Paragraph::new(vec![
                     Line::from(Span::styled(
                         "Wizard Cancelled",
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
@@ -236,7 +234,7 @@ impl Model for WizardApp {
                 Constraint::Length(1), // Progress bar
                 Constraint::Length(1), // Gap
                 Constraint::Length(2), // Step title
-                Constraint::Fill(1),  // Step content
+                Constraint::Fill(1),   // Step content
                 Constraint::Length(1), // Gap
                 Constraint::Length(1), // Nav hints
             ])
@@ -301,11 +299,9 @@ impl Model for WizardApp {
                 self.name_input.view(frame, input_inner);
 
                 if self.name_input.value().trim().is_empty() {
-                    let [_, warn_area] = Layout::vertical([
-                        Constraint::Length(5),
-                        Constraint::Length(1),
-                    ])
-                    .areas(content_area);
+                    let [_, warn_area] =
+                        Layout::vertical([Constraint::Length(5), Constraint::Length(1)])
+                            .areas(content_area);
                     let warn = Paragraph::new(Span::styled(
                         "Name is required to continue.",
                         Style::default().fg(Color::Yellow),
@@ -376,15 +372,15 @@ impl Model for WizardApp {
                     Some(Msg::NextStep)
                 }
                 // Esc to go back
-                (KeyCode::Esc, _) if step != Step::Welcome && step != Step::Done && step != Step::Cancelled => {
+                (KeyCode::Esc, _)
+                    if step != Step::Welcome && step != Step::Done && step != Step::Cancelled =>
+                {
                     Some(Msg::PrevStep)
                 }
                 // Esc on welcome = cancel
                 (KeyCode::Esc, _) if step == Step::Welcome => Some(Msg::Cancel),
                 // Forward everything else to TextInput on the Name step
-                _ if step == Step::Name => {
-                    Some(Msg::NameInput(text_input::Message::KeyPress(key)))
-                }
+                _ if step == Step::Name => Some(Msg::NameInput(text_input::Message::KeyPress(key))),
                 _ => None,
             },
             _ => None,

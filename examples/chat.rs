@@ -17,7 +17,9 @@ use boba::ratatui::widgets::Paragraph;
 use boba::ratatui::Frame;
 use boba::widgets::chrome::focus_block;
 use boba::widgets::viewport::{self, Viewport};
-use boba::{subscribe, terminal_events, Command, Component, Every, Model, Subscription, TerminalEvent};
+use boba::{
+    subscribe, terminal_events, Command, Component, Every, Model, Subscription, TerminalEvent,
+};
 
 // ---------------------------------------------------------------------------
 // Domain types
@@ -235,7 +237,10 @@ impl Model for ChatApp {
         let scroll_status = if self.auto_scroll {
             Span::styled("auto-scroll: on", Style::default().fg(Color::Green))
         } else {
-            Span::styled("auto-scroll: off (press End to resume)", Style::default().fg(Color::Yellow))
+            Span::styled(
+                "auto-scroll: off (press End to resume)",
+                Style::default().fg(Color::Yellow),
+            )
         };
         let streaming_status = if self.streaming {
             Span::styled("  streaming...", Style::default().fg(Color::Yellow))
@@ -273,8 +278,7 @@ impl Model for ChatApp {
         // Timer for simulated streaming
         if self.streaming {
             subs.push(
-                subscribe(Every::new(Duration::from_millis(50), "stream"))
-                    .map(|_| Msg::StreamTick),
+                subscribe(Every::new(Duration::from_millis(50), "stream")).map(|_| Msg::StreamTick),
             );
         }
 
@@ -315,10 +319,7 @@ impl ChatApp {
                         .add_modifier(Modifier::BOLD),
                 ),
             };
-            lines.push(Line::from(Span::styled(
-                format!("{label}: "),
-                style,
-            )));
+            lines.push(Line::from(Span::styled(format!("{label}: "), style)));
 
             // Message content
             if msg.content.is_empty() && msg.is_streaming {

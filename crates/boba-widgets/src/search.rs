@@ -186,7 +186,6 @@ impl Search {
             }
         }
     }
-
 }
 
 impl Component for Search {

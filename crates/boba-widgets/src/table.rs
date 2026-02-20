@@ -7,9 +7,7 @@ use boba_core::component::Component;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{
-    Block, Cell as RatatuiCell, Row, Table as RatatuiTable, TableState,
-};
+use ratatui::widgets::{Block, Cell as RatatuiCell, Row, Table as RatatuiTable, TableState};
 use ratatui::Frame;
 use std::cell::Cell as StdCell;
 

@@ -135,15 +135,14 @@ impl Model for AutocompleteApp {
     fn view(&self, frame: &mut Frame) {
         let area = frame.area();
 
-        let [title_area, input_area, dropdown_area, status_area, help_area] =
-            Layout::vertical([
-                Constraint::Length(2),
-                Constraint::Length(3),
-                Constraint::Length(10),
-                Constraint::Fill(1),
-                Constraint::Length(1),
-            ])
-            .areas(area);
+        let [title_area, input_area, dropdown_area, status_area, help_area] = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Length(3),
+            Constraint::Length(10),
+            Constraint::Fill(1),
+            Constraint::Length(1),
+        ])
+        .areas(area);
 
         // Title
         let title = Paragraph::new(Line::from(Span::styled(

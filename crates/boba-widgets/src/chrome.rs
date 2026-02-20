@@ -8,7 +8,11 @@ use ratatui::widgets::{Block, Borders};
 /// Uses cyan when focused, dark gray when unfocused. Suitable as a
 /// default chrome for any widget.
 pub fn focus_block(title: &str, focused: bool) -> Block<'_> {
-    let color = if focused { Color::Cyan } else { Color::DarkGray };
+    let color = if focused {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
     Block::new()
         .borders(Borders::ALL)
         .title(title)

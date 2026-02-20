@@ -32,8 +32,8 @@
 //!
 //! | Module | Feature | Description |
 //! |--------|---------|-------------|
-//! | [`code_block`] | `syntax-highlighting` | Syntax-highlighted code block (syntect) |
-//! | [`markdown`] | `markdown` | CommonMark renderer with highlighting |
+//! | `code_block` | `syntax-highlighting` | Syntax-highlighted code block (syntect) |
+//! | `markdown` | `markdown` | CommonMark renderer with highlighting |
 //!
 //! # Utilities
 //!

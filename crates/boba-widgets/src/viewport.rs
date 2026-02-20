@@ -482,8 +482,7 @@ impl Component for Viewport {
             Text::raw(&self.content)
         };
 
-        let paragraph = Paragraph::new(text)
-            .scroll((offset, self.h_offset));
+        let paragraph = Paragraph::new(text).scroll((offset, self.h_offset));
 
         frame.render_widget(paragraph, inner);
 

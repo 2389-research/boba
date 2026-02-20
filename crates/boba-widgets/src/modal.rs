@@ -229,7 +229,6 @@ impl Modal {
     pub fn title(&self) -> &str {
         &self.title
     }
-
 }
 
 impl Component for Modal {
@@ -254,8 +253,7 @@ impl Component for Modal {
                     | (KeyCode::Char('l'), KeyModifiers::NONE)
                     | (KeyCode::Tab, _) => {
                         if !self.actions.is_empty() {
-                            self.focused_action =
-                                (self.focused_action + 1) % self.actions.len();
+                            self.focused_action = (self.focused_action + 1) % self.actions.len();
                         }
                         Command::none()
                     }
@@ -271,8 +269,7 @@ impl Component for Modal {
                     }
                     (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
                         if !self.actions.is_empty() {
-                            self.focused_action =
-                                (self.focused_action + 1) % self.actions.len();
+                            self.focused_action = (self.focused_action + 1) % self.actions.len();
                         }
                         Command::none()
                     }
@@ -364,9 +361,7 @@ impl Component for Modal {
                             spans.push(Span::raw("  "));
                         }
                         let style = if i == self.focused_action {
-                            action
-                                .focused_style
-                                .unwrap_or(self.style.focused_action)
+                            action.focused_style.unwrap_or(self.style.focused_action)
                         } else {
                             action.style.unwrap_or(self.style.action)
                         };
@@ -395,9 +390,7 @@ impl Component for Modal {
                         };
 
                         let style = if i == self.focused_action {
-                            action
-                                .focused_style
-                                .unwrap_or(self.style.focused_action)
+                            action.focused_style.unwrap_or(self.style.focused_action)
                         } else {
                             action.style.unwrap_or(self.style.action)
                         };

@@ -204,9 +204,7 @@ impl Model for FullApp {
             }
             let lines = self.help.full_help_view(&groups);
             let overlay_area = overlay::centered_fixed(60, 20, area);
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title(" Help ");
+            let block = Block::default().borders(Borders::ALL).title(" Help ");
             let inner = overlay::render_overlay(frame, overlay_area, Some(&block));
             let paragraph = Paragraph::new(lines)
                 .wrap(Wrap { trim: false })

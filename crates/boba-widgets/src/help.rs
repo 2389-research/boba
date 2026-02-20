@@ -222,19 +222,18 @@ mod tests {
 
     #[test]
     fn short_help_line_produces_expected_spans() {
-        let help = Help::new()
-            .with_bindings(vec![
-                HelpBinding {
-                    keys: "q".into(),
-                    description: "Quit".into(),
-                    group: "General".into(),
-                },
-                HelpBinding {
-                    keys: "?".into(),
-                    description: "Help".into(),
-                    group: "General".into(),
-                },
-            ]);
+        let help = Help::new().with_bindings(vec![
+            HelpBinding {
+                keys: "q".into(),
+                description: "Quit".into(),
+                group: "General".into(),
+            },
+            HelpBinding {
+                keys: "?".into(),
+                description: "Help".into(),
+                group: "General".into(),
+            },
+        ]);
 
         let line = help.short_help_line();
         let spans = line.spans;
@@ -252,20 +251,18 @@ mod tests {
 
     #[test]
     fn short_help_line_truncates_with_ellipsis() {
-        let help = Help::new()
-            .with_max_width(10)
-            .with_bindings(vec![
-                HelpBinding {
-                    keys: "q".into(),
-                    description: "Quit".into(),
-                    group: "General".into(),
-                },
-                HelpBinding {
-                    keys: "?".into(),
-                    description: "Help".into(),
-                    group: "General".into(),
-                },
-            ]);
+        let help = Help::new().with_max_width(10).with_bindings(vec![
+            HelpBinding {
+                keys: "q".into(),
+                description: "Quit".into(),
+                group: "General".into(),
+            },
+            HelpBinding {
+                keys: "?".into(),
+                description: "Help".into(),
+                group: "General".into(),
+            },
+        ]);
 
         let line = help.short_help_line();
         let spans = line.spans;
@@ -282,12 +279,22 @@ mod tests {
         let help = Help::new();
 
         let nav = vec![
-            HelpBinding { keys: "up".into(), description: "Move up".into(), group: "Navigation".into() },
-            HelpBinding { keys: "down".into(), description: "Move down".into(), group: "Navigation".into() },
+            HelpBinding {
+                keys: "up".into(),
+                description: "Move up".into(),
+                group: "Navigation".into(),
+            },
+            HelpBinding {
+                keys: "down".into(),
+                description: "Move down".into(),
+                group: "Navigation".into(),
+            },
         ];
-        let general = vec![
-            HelpBinding { keys: "q".into(), description: "Quit".into(), group: "General".into() },
-        ];
+        let general = vec![HelpBinding {
+            keys: "q".into(),
+            description: "Quit".into(),
+            group: "General".into(),
+        }];
 
         let groups = vec![nav, general];
         let lines = help.full_help_view(&groups);
@@ -297,7 +304,7 @@ mod tests {
         assert_eq!(lines[0].spans[0].content, "Navigation");
         // Blank separator between groups
         assert_eq!(lines[3].spans.len(), 0); // blank Line::raw("")
-        // General header
+                                             // General header
         assert_eq!(lines[4].spans[0].content, "General");
     }
 
