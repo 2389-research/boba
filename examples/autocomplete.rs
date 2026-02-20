@@ -135,7 +135,7 @@ impl Model for AutocompleteApp {
     fn view(&self, frame: &mut Frame) {
         let area = frame.area();
 
-        let [title_area, input_area, dropdown_area, status_area, help_area] = Layout::vertical([
+        let [title_area, input_area, _dropdown_area, status_area, help_area] = Layout::vertical([
             Constraint::Length(2),
             Constraint::Length(3),
             Constraint::Length(10),
@@ -159,9 +159,9 @@ impl Model for AutocompleteApp {
         frame.render_widget(block, input_area);
         self.input.view(frame, inner);
 
-        // Dropdown (only visible when open)
+        // Dropdown (anchored to input_area so it renders directly below the input)
         if self.dropdown_open {
-            self.dropdown.view(frame, dropdown_area);
+            self.dropdown.view(frame, input_area);
         }
 
         // Status

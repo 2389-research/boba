@@ -6,7 +6,7 @@
 
 **Architecture:** Bottom-up refactor in 5 layers. Each layer is independently shippable. Layer 0 (borderless defaults) is the highest-impact change. Subsequent layers extract shared code and remove duplication.
 
-**Tech Stack:** Rust, ratatui 0.30, crossterm 0.28, tokio
+**Tech Stack:** Rust, ratatui 0.30, crossterm 0.29, tokio
 
 ---
 

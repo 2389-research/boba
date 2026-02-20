@@ -286,7 +286,7 @@ impl Component for Dropdown {
             // Truncate if needed
             let max_text_width = row_area.width.saturating_sub(2) as usize; // prefix is 2 chars
             let display = if item.len() > max_text_width {
-                format!("{}{}", prefix, &item[..max_text_width.saturating_sub(3)])
+                format!("{}{}...", prefix, &item[..max_text_width.saturating_sub(3)])
             } else {
                 format!("{}{}", prefix, item)
             };

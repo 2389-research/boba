@@ -289,7 +289,8 @@ impl Component for Progress {
             .ratio(self.current.clamp(0.0, 1.0))
             .label(label);
         if let Some(ref block) = self.block {
-            gauge = gauge.block(block.clone().style(empty_style));
+            gauge = gauge.block(block.clone());
+            gauge = gauge.style(empty_style);
         } else {
             gauge = gauge.style(empty_style);
         }
