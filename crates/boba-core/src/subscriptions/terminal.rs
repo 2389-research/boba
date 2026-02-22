@@ -16,7 +16,7 @@ use std::sync::Arc;
 /// keyboard input even when stdin is redirected. For example,
 /// `echo "data" | my_boba_app` will still read interactive keyboard events
 /// from the terminal, not from the pipe.
-pub struct TerminalEvents;
+pub(crate) struct TerminalEvents;
 
 impl SubscriptionSource for TerminalEvents {
     type Output = TerminalEvent;
