@@ -56,16 +56,38 @@ impl SubscriptionSource for TerminalEvents {
 pub fn terminal_events<Msg: Send + 'static>(
     map: impl Fn(TerminalEvent) -> Option<Msg> + Send + Sync + 'static,
 ) -> crate::subscription::Subscription<Msg> {
+    use crate::subscription::Subscription;
+    use tokio::sync::mpsc;
+    use tokio::task::AbortHandle;
+
     let id = SubscriptionId::of::<TerminalEvents>();
     let map = Arc::new(map);
-    let stream = EventStream::new().filter_map(move |result| {
-        let map = map.clone();
-        async move {
-            match result {
-                Ok(event) => map(TerminalEvent::from(event)),
-                Err(_) => None,
-            }
-        }
-    });
-    crate::subscription::Subscription::from_stream(id, Box::pin(stream))
+
+    // Create EventStream lazily inside the spawned task, not eagerly.
+    // Eager creation causes crossterm's global InternalEventReader to be
+    // accessed on every subscriptions() call (each update cycle), which
+    // interferes with the active EventStream's polling.
+    Subscription {
+        id,
+        spawn: Box::new(move |tx: mpsc::UnboundedSender<Msg>| -> AbortHandle {
+            let handle = tokio::spawn(async move {
+                let stream = EventStream::new().filter_map(move |result| {
+                    let map = map.clone();
+                    async move {
+                        match result {
+                            Ok(event) => map(TerminalEvent::from(event)),
+                            Err(_) => None,
+                        }
+                    }
+                });
+                futures::pin_mut!(stream);
+                while let Some(msg) = stream.next().await {
+                    if tx.send(msg).is_err() {
+                        break;
+                    }
+                }
+            });
+            handle.abort_handle()
+        }),
+    }
 }
