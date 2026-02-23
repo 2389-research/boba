@@ -98,7 +98,7 @@ impl KeyCombination {
 }
 
 /// Trait for types that define key bindings, enabling integration with the
-/// [`Help`](crate::help::Help) component.
+/// [`Help`](crate::help::Help) formatter.
 pub trait KeyMap {
     /// Return a flat list of the most important bindings for the short help line.
     fn short_help(&self) -> Vec<&Binding>;

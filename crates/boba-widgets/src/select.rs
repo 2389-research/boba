@@ -1,14 +1,17 @@
 //! Dropdown select/picker component for choosing from a list of options.
+//!
+//! This is a convenience wrapper that composes a one-line trigger display
+//! with a [`Dropdown`] overlay for the actual
+//! item list and navigation.
 
+use crate::dropdown::{self, Dropdown, DropdownStyle};
 use boba_core::command::Command;
 use boba_core::component::Component;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph,
-};
+use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 
 /// Messages for the select component.
@@ -26,15 +29,18 @@ pub enum Message {
 
 /// A dropdown/picker component that presents a list of options in a
 /// collapsible overlay and tracks the current selection.
+///
+/// Internally this composes a [`Dropdown`] for the overlay portion, while
+/// rendering its own single-line trigger display.
 pub struct Select {
     options: Vec<String>,
     selected: Option<usize>,
-    cursor: usize,
+    dropdown: Dropdown,
     open: bool,
     focus: bool,
-    title: String,
     placeholder: String,
     style: SelectStyle,
+    block: Option<Block<'static>>,
 }
 
 /// Visual style configuration for the [`Select`] component.
@@ -44,12 +50,6 @@ pub struct SelectStyle {
     pub normal: Style,
     /// Style applied to the currently highlighted/selected option.
     pub selected: Style,
-    /// Border style when the select component has focus.
-    pub focused_border: Style,
-    /// Border style when the select component does not have focus.
-    pub unfocused_border: Style,
-    /// Border style for the dropdown overlay.
-    pub dropdown_border: Style,
     /// Symbol displayed next to the highlighted option in the dropdown.
     pub highlight_symbol: String,
 }
@@ -61,9 +61,6 @@ impl Default for SelectStyle {
             selected: Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-            focused_border: Style::default().fg(Color::Cyan),
-            unfocused_border: Style::default().fg(Color::DarkGray),
-            dropdown_border: Style::default().fg(Color::Cyan),
             highlight_symbol: "▸ ".to_string(),
         }
     }
@@ -72,21 +69,26 @@ impl Default for SelectStyle {
 impl Select {
     /// Create a new select component with the given list of options.
     pub fn new(options: Vec<String>) -> Self {
+        let mut dropdown = Dropdown::new().with_max_visible(10);
+        dropdown.set_items(options.clone());
+        // Dropdown auto-shows on set_items; hide it since Select starts closed
+        dropdown.hide();
+
         Self {
             options,
             selected: None,
-            cursor: 0,
+            dropdown,
             open: false,
             focus: false,
-            title: String::new(),
             placeholder: "Select...".to_string(),
             style: SelectStyle::default(),
+            block: None,
         }
     }
 
     /// Set the title displayed in the select border.
     pub fn with_title(mut self, title: impl Into<String>) -> Self {
-        self.title = title.into();
+        self.dropdown.set_title(title);
         self
     }
 
@@ -97,8 +99,27 @@ impl Select {
     }
 
     /// Set the visual style for this select component.
+    ///
+    /// The [`SelectStyle`] is mapped onto the internal [`Dropdown`]'s
+    /// [`DropdownStyle`] so that item and selection colours stay in sync.
     pub fn with_style(mut self, style: SelectStyle) -> Self {
+        self.dropdown = self.dropdown.with_style(DropdownStyle {
+            item: style.normal,
+            selected_item: style.selected,
+        });
         self.style = style;
+        self
+    }
+
+    /// Set the block (border/title container) for the trigger area.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
+        self
+    }
+
+    /// Set the block (border/title container) for the dropdown overlay.
+    pub fn with_dropdown_block(mut self, block: Block<'static>) -> Self {
+        self.dropdown = self.dropdown.with_block(block);
         self
     }
 
@@ -111,6 +132,7 @@ impl Select {
     pub fn blur(&mut self) {
         self.focus = false;
         self.open = false;
+        self.dropdown.hide();
     }
 
     /// Return the index of the currently selected option, if any.
@@ -123,6 +145,31 @@ impl Select {
         self.selected
             .and_then(|i| self.options.get(i).map(|s| s.as_str()))
     }
+
+    /// Open the dropdown, forwarding to the internal Dropdown.
+    fn open_dropdown(&mut self) {
+        self.open = true;
+        self.dropdown.show();
+        if let Some(i) = self.selected {
+            self.dropdown.set_selected(i);
+        }
+    }
+
+    /// Close the dropdown.
+    fn close_dropdown(&mut self) {
+        self.open = false;
+        self.dropdown.hide();
+    }
+
+    /// Map a [`dropdown::Message`] to a [`Message`], updating internal state
+    /// as needed. Returns the [`Command`] to emit.
+    fn handle_dropdown_result(&mut self, cmd: Command<dropdown::Message>) -> Command<Message> {
+        cmd.map(|dmsg| match dmsg {
+            dropdown::Message::Selected(idx, val) => Message::Selected(idx, val),
+            dropdown::Message::Dismissed => Message::Close,
+            dropdown::Message::KeyPress(k) => Message::KeyPress(k),
+        })
+    }
 }
 
 impl Component for Select {
@@ -131,43 +178,27 @@ impl Component for Select {
     fn update(&mut self, msg: Message) -> Command<Message> {
         match msg {
             Message::KeyPress(key) if self.focus => {
-                if self.open && !self.options.is_empty() {
-                    match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            if self.cursor > 0 {
-                                self.cursor -= 1;
-                            } else {
-                                self.cursor = self.options.len().saturating_sub(1);
+                if self.open {
+                    // Forward to Dropdown and map the result
+                    let cmd = self.dropdown.update(dropdown::Message::KeyPress(key));
+                    // Check if the dropdown closed itself (Selected or Dismissed)
+                    if !self.dropdown.is_visible() {
+                        // Dropdown hid itself — sync our state
+                        self.open = false;
+                        // If it was a selection, capture it
+                        if key.code == KeyCode::Enter {
+                            let idx = self.dropdown.selected_index();
+                            if let Some(val) = self.options.get(idx) {
+                                self.selected = Some(idx);
+                                return Command::message(Message::Selected(idx, val.clone()));
                             }
-                            Command::none()
                         }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            if self.cursor + 1 >= self.options.len() {
-                                self.cursor = 0;
-                            } else {
-                                self.cursor += 1;
-                            }
-                            Command::none()
-                        }
-                        KeyCode::Enter => {
-                            self.selected = Some(self.cursor);
-                            self.open = false;
-                            let value = self.options[self.cursor].clone();
-                            Command::message(Message::Selected(self.cursor, value))
-                        }
-                        KeyCode::Esc => {
-                            self.open = false;
-                            Command::none()
-                        }
-                        _ => Command::none(),
                     }
+                    self.handle_dropdown_result(cmd)
                 } else {
                     match key.code {
                         KeyCode::Enter | KeyCode::Char(' ') => {
-                            self.open = true;
-                            if let Some(i) = self.selected {
-                                self.cursor = i;
-                            }
+                            self.open_dropdown();
                             Command::none()
                         }
                         _ => Command::none(),
@@ -175,11 +206,11 @@ impl Component for Select {
                 }
             }
             Message::Open => {
-                self.open = true;
+                self.open_dropdown();
                 Command::none()
             }
             Message::Close => {
-                self.open = false;
+                self.close_dropdown();
                 Command::none()
             }
             _ => Command::none(),
@@ -187,19 +218,14 @@ impl Component for Select {
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
-        let border_style = if self.focus {
-            self.style.focused_border
+        // Render trigger line
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(area);
+            frame.render_widget(block.clone(), area);
+            inner
         } else {
-            self.style.unfocused_border
+            area
         };
-
-        let mut block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style);
-
-        if !self.title.is_empty() {
-            block = block.title(self.title.as_str());
-        }
 
         let display_text = if let Some(i) = self.selected {
             Span::styled(&self.options[i], self.style.normal)
@@ -213,41 +239,12 @@ impl Component for Select {
             Span::styled(arrow, Style::default().fg(Color::DarkGray)),
         ]);
 
-        let paragraph = Paragraph::new(line).block(block);
-        frame.render_widget(paragraph, area);
+        let paragraph = Paragraph::new(line);
+        frame.render_widget(paragraph, inner);
 
-        // Render dropdown overlay when open
+        // Delegate dropdown overlay rendering to the internal Dropdown
         if self.open {
-            let dropdown_height = (self.options.len() as u16 + 2).min(10);
-            let dropdown_area =
-                Rect::new(area.x, area.y + area.height, area.width, dropdown_height);
-
-            // Only render if within frame bounds
-            let frame_area = frame.area();
-            if dropdown_area.y + dropdown_area.height <= frame_area.height {
-                frame.render_widget(Clear, dropdown_area);
-
-                let items: Vec<ListItem> = self
-                    .options
-                    .iter()
-                    .map(|s| ListItem::new(Line::raw(s)))
-                    .collect();
-
-                let mut state = ListState::default();
-                state.select(Some(self.cursor));
-
-                let list = List::new(items)
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(self.style.dropdown_border),
-                    )
-                    .highlight_style(self.style.selected)
-                    .highlight_symbol(&self.style.highlight_symbol)
-                    .highlight_spacing(HighlightSpacing::Always);
-
-                frame.render_stateful_widget(list, dropdown_area, &mut state);
-            }
+            self.dropdown.view(frame, area);
         }
     }
 

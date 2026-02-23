@@ -23,6 +23,10 @@ syntax-highlighting = ["boba-widgets/syntax-highlighting"]
 markdown = ["boba-widgets/markdown"]
 
 [[example]]
+name = "autocomplete"
+path = "../../examples/autocomplete.rs"
+
+[[example]]
 name = "counter"
 path = "../../examples/counter.rs"
 
@@ -41,3 +45,11 @@ path = "../../examples/full_app.rs"
 [[example]]
 name = "file_browser"
 path = "../../examples/file_browser.rs"
+
+[[example]]
+name = "chat"
+path = "../../examples/chat.rs"
+
+[[example]]
+name = "wizard"
+path = "../../examples/wizard.rs"

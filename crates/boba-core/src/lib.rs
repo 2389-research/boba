@@ -91,7 +91,7 @@ pub use runtime::{
     log_to_file, OutputTarget, Program, ProgramError, ProgramHandle, ProgramOptions,
 };
 pub use subscription::{subscribe, Subscription, SubscriptionId, SubscriptionSource};
-pub use subscriptions::{terminal_events, After, Every, TerminalEvents};
+pub use subscriptions::{terminal_events, After, Every};
 
 /// Run a boba application with default options.
 pub async fn run<M: Model>(flags: M::Flags) -> Result<M, ProgramError> {

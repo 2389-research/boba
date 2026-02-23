@@ -6,7 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Tabs as RatatuiTabs};
+use ratatui::widgets::{Block, Tabs as RatatuiTabs};
 use ratatui::Frame;
 
 /// Messages for the tabs component.
@@ -25,6 +25,7 @@ pub struct Tabs {
     selected: usize,
     focus: bool,
     style: TabsStyle,
+    block: Option<Block<'static>>,
 }
 
 /// Visual style configuration for the [`Tabs`] component.
@@ -34,8 +35,6 @@ pub struct TabsStyle {
     pub normal: Style,
     /// Style applied to the currently selected tab label.
     pub selected: Style,
-    /// Style applied to the tab bar border.
-    pub border: Style,
     /// String used as a divider between tab labels.
     pub divider: String,
 }
@@ -47,7 +46,6 @@ impl Default for TabsStyle {
             selected: Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-            border: Style::default().fg(Color::DarkGray),
             divider: " | ".to_string(),
         }
     }
@@ -61,12 +59,19 @@ impl Tabs {
             selected: 0,
             focus: false,
             style: TabsStyle::default(),
+            block: None,
         }
     }
 
     /// Set the visual style for this tabs component.
     pub fn with_style(mut self, style: TabsStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// Set the block (border/title container) for the tabs.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
         self
     }
 
@@ -143,16 +148,14 @@ impl Component for Tabs {
     fn view(&self, frame: &mut Frame, area: Rect) {
         let titles: Vec<Line> = self.titles.iter().map(|t| Line::raw(t.as_str())).collect();
 
-        let tabs = RatatuiTabs::new(titles)
-            .block(
-                Block::default()
-                    .borders(Borders::BOTTOM)
-                    .border_style(self.style.border),
-            )
+        let mut tabs = RatatuiTabs::new(titles)
             .select(self.selected)
             .style(self.style.normal)
             .highlight_style(self.style.selected)
             .divider(&self.style.divider);
+        if let Some(ref block) = self.block {
+            tabs = tabs.block(block.clone());
+        }
 
         frame.render_widget(tabs, area);
     }

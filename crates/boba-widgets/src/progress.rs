@@ -6,7 +6,7 @@ use boba_core::subscription::Subscription;
 use boba_core::subscriptions::Every;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Borders, Gauge};
+use ratatui::widgets::{Block, Gauge};
 use ratatui::Frame;
 use std::time::Duration;
 
@@ -38,6 +38,7 @@ pub struct Progress {
     gradient: Option<(Color, Color)>,
     fill_color: Option<Color>,
     empty_color: Option<Color>,
+    block: Option<Block<'static>>,
 }
 
 /// Visual style configuration for the [`Progress`] component.
@@ -47,8 +48,6 @@ pub struct ProgressStyle {
     pub filled: Style,
     /// Style applied to the unfilled portion of the bar.
     pub unfilled: Style,
-    /// Style applied to the bar border.
-    pub border: Style,
     /// Style applied to the label text.
     pub label: Style,
 }
@@ -58,7 +57,6 @@ impl Default for ProgressStyle {
         Self {
             filled: Style::default().fg(Color::Cyan),
             unfilled: Style::default().fg(Color::DarkGray),
-            border: Style::default().fg(Color::DarkGray),
             label: Style::default(),
         }
     }
@@ -85,6 +83,7 @@ impl Progress {
             gradient: None,
             fill_color: None,
             empty_color: None,
+            block: None,
         }
     }
 
@@ -97,6 +96,12 @@ impl Progress {
     /// Set the visual style for this progress bar.
     pub fn with_style(mut self, style: ProgressStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// Set the block (border/title container) for the progress bar.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
         self
     }
 
@@ -279,16 +284,16 @@ impl Component for Progress {
             self.style.unfilled
         };
 
-        let gauge = Gauge::default()
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(self.style.border)
-                    .style(empty_style),
-            )
+        let mut gauge = Gauge::default()
             .gauge_style(filled_style)
             .ratio(self.current.clamp(0.0, 1.0))
             .label(label);
+        if let Some(ref block) = self.block {
+            gauge = gauge.block(block.clone());
+            gauge = gauge.style(empty_style);
+        } else {
+            gauge = gauge.style(empty_style);
+        }
 
         frame.render_widget(gauge, area);
     }
