@@ -534,6 +534,11 @@ impl<I: Item> List<I> {
         self.items.len()
     }
 
+    /// Return a reference to the items slice.
+    pub fn items(&self) -> &[I] {
+        &self.items
+    }
+
     // --- Status message ---
 
     /// Set or clear the status message shown below the list.
