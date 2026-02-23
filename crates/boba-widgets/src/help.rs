@@ -1,43 +1,17 @@
-//! Keybinding help overlay with short and full help views.
+//! Keybinding help formatting utilities.
+//!
+//! `Help` is a pure rendering/formatting utility — no state, no update loop.
+//! It holds a collection of [`HelpBinding`]s and style configuration, and
+//! provides methods to produce formatted [`Line`]s for embedding in any widget.
+//!
+//! For overlay behavior (centered rect, scroll, key handling), compose
+//! `help.full_help_view()` with [`overlay::render_overlay()`](crate::overlay::render_overlay)
+//! and a scrollable widget like [`Paragraph`](ratatui::widgets::Paragraph).
 
-use std::cell::Cell;
-
-use boba_core::command::Command;
-use boba_core::component::Component;
-use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
-use ratatui::Frame;
 
-/// Messages for the help component.
-#[derive(Debug, Clone)]
-pub enum Message {
-    /// A key press event forwarded to the help component.
-    KeyPress(KeyEvent),
-    /// Toggle the help overlay visibility.
-    Toggle,
-    /// Show the help overlay.
-    Show,
-    /// Hide the help overlay.
-    Hide,
-}
-
-/// A keybinding help display component that can render a short inline help
-/// line or a full scrollable overlay listing all registered bindings.
-pub struct Help {
-    bindings: Vec<HelpBinding>,
-    visible: bool,
-    style: HelpStyle,
-    separator: String,
-    max_width: Option<u16>,
-    ellipsis: String,
-    scroll_offset: usize,
-    visible_height: Cell<u16>,
-}
-
-/// A single keybinding entry displayed in the help overlay.
+/// A single keybinding entry displayed in help views.
 #[derive(Debug, Clone)]
 pub struct HelpBinding {
     /// The key or key combination label (e.g. "ctrl+c").
@@ -48,7 +22,7 @@ pub struct HelpBinding {
     pub group: String,
 }
 
-/// Visual style configuration for the [`Help`] component.
+/// Visual style configuration for [`Help`] formatting.
 #[derive(Debug, Clone)]
 pub struct HelpStyle {
     /// Style applied to key labels.
@@ -57,8 +31,6 @@ pub struct HelpStyle {
     pub description: Style,
     /// Style applied to group headings.
     pub group: Style,
-    /// Style applied to the overlay border.
-    pub border: Style,
     /// Style applied to the overlay title.
     pub title: Style,
 }
@@ -73,7 +45,6 @@ impl Default for HelpStyle {
             group: Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
-            border: Style::default().fg(Color::DarkGray),
             title: Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
@@ -81,18 +52,46 @@ impl Default for HelpStyle {
     }
 }
 
+/// A keybinding help formatter.
+///
+/// `Help` holds a list of bindings and style configuration. It provides methods
+/// to produce formatted [`Line`]s suitable for rendering in a status bar
+/// ([`short_help_line`](Help::short_help_line)) or a full help panel
+/// ([`full_help_view`](Help::full_help_view)).
+///
+/// # Example
+///
+/// ```
+/// use boba_widgets::help::Help;
+///
+/// let mut help = Help::new();
+/// help.add_binding("?", "Toggle help", "General");
+/// help.add_binding("q", "Quit", "General");
+///
+/// // For a status bar:
+/// let line = help.short_help_line();
+///
+/// // For a full overlay (compose with overlay + Paragraph yourself):
+/// let grouped = vec![help.bindings().to_vec()];
+/// let lines = help.full_help_view(&grouped);
+/// ```
+pub struct Help {
+    bindings: Vec<HelpBinding>,
+    style: HelpStyle,
+    separator: String,
+    max_width: Option<u16>,
+    ellipsis: String,
+}
+
 impl Help {
-    /// Create a new help component with no bindings and default settings.
+    /// Create a new help formatter with no bindings and default settings.
     pub fn new() -> Self {
         Self {
             bindings: Vec::new(),
-            visible: false,
             style: HelpStyle::default(),
             separator: " \u{2022} ".to_string(), // " • "
             max_width: None,
             ellipsis: "\u{2026}".to_string(), // "…"
-            scroll_offset: 0,
-            visible_height: Cell::new(24),
         }
     }
 
@@ -102,7 +101,7 @@ impl Help {
         self
     }
 
-    /// Set the visual style for this help component.
+    /// Set the visual style for this help formatter.
     pub fn with_style(mut self, style: HelpStyle) -> Self {
         self.style = style;
         self
@@ -121,7 +120,7 @@ impl Help {
         self
     }
 
-    /// Set the ellipsis string used when truncating. Default is "...".
+    /// Set the ellipsis string used when truncating. Default is "\u{2026}".
     pub fn with_ellipsis(mut self, s: impl Into<String>) -> Self {
         self.ellipsis = s.into();
         self
@@ -141,32 +140,12 @@ impl Help {
         });
     }
 
-    /// Return whether the help overlay is currently visible.
-    pub fn is_visible(&self) -> bool {
-        self.visible
+    /// Return a reference to the current bindings.
+    pub fn bindings(&self) -> &[HelpBinding] {
+        &self.bindings
     }
 
-    /// Show the help overlay and reset the scroll position.
-    pub fn show(&mut self) {
-        self.visible = true;
-        self.scroll_offset = 0;
-    }
-
-    /// Hide the help overlay and reset the scroll position.
-    pub fn hide(&mut self) {
-        self.visible = false;
-        self.scroll_offset = 0;
-    }
-
-    /// Toggle help overlay visibility. Resets scroll position when showing.
-    pub fn toggle(&mut self) {
-        self.visible = !self.visible;
-        if self.visible {
-            self.scroll_offset = 0;
-        }
-    }
-
-    /// Build a short help line (for a status bar).
+    /// Build a short help line from all registered bindings (for a status bar).
     pub fn short_help_line(&self) -> Line<'_> {
         self.short_help_view(&self.bindings)
     }
@@ -237,236 +216,112 @@ impl Default for Help {
     }
 }
 
-impl Component for Help {
-    type Message = Message;
-
-    fn update(&mut self, msg: Message) -> Command<Message> {
-        match msg {
-            Message::KeyPress(key) => match key.code {
-                KeyCode::Char('?') => {
-                    self.toggle();
-                    Command::none()
-                }
-                KeyCode::Esc if self.visible => {
-                    self.hide();
-                    Command::none()
-                }
-                KeyCode::Up | KeyCode::Char('k') if self.visible => {
-                    self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                    Command::none()
-                }
-                KeyCode::Down | KeyCode::Char('j') if self.visible => {
-                    // Clamp to total bindings as a reasonable upper bound.
-                    // The exact max depends on rendered height, which is clamped in view().
-                    let max = self.bindings.len();
-                    self.scroll_offset = self.scroll_offset.saturating_add(1).min(max);
-                    Command::none()
-                }
-                KeyCode::PageUp if self.visible => {
-                    let visible_height = self.visible_height.get() as usize;
-                    self.scroll_offset = self.scroll_offset.saturating_sub(visible_height);
-                    Command::none()
-                }
-                KeyCode::PageDown if self.visible => {
-                    let visible_height = self.visible_height.get() as usize;
-                    let max = self.bindings.len();
-                    self.scroll_offset = self.scroll_offset.saturating_add(visible_height).min(max);
-                    Command::none()
-                }
-                KeyCode::Home if self.visible => {
-                    self.scroll_offset = 0;
-                    Command::none()
-                }
-                KeyCode::End if self.visible => {
-                    // Set to bindings.len(); view() will clamp to the true max_scroll.
-                    self.scroll_offset = self.bindings.len();
-                    Command::none()
-                }
-                _ => Command::none(),
-            },
-            Message::Toggle => {
-                self.toggle();
-                Command::none()
-            }
-            Message::Show => {
-                self.show();
-                Command::none()
-            }
-            Message::Hide => {
-                self.hide();
-                Command::none()
-            }
-        }
-    }
-
-    fn view(&self, frame: &mut Frame, area: Rect) {
-        if !self.visible {
-            return;
-        }
-
-        // Center the help overlay
-        let width = area.width.min(60);
-        let height = area.height.min((self.bindings.len() as u16 + 4).min(20));
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let overlay = Rect::new(x, y, width, height);
-
-        frame.render_widget(Clear, overlay);
-
-        let mut lines: Vec<Line> = Vec::new();
-
-        let mut current_group = String::new();
-        for binding in &self.bindings {
-            if binding.group != current_group {
-                if !current_group.is_empty() {
-                    lines.push(Line::raw(""));
-                }
-                lines.push(Line::from(Span::styled(&binding.group, self.style.group)));
-                current_group = binding.group.clone();
-            }
-
-            lines.push(Line::from(vec![
-                Span::styled(format!("{:<12}", binding.keys), self.style.key),
-                Span::styled(&binding.description, self.style.description),
-            ]));
-        }
-
-        let block = Block::default()
-            .title(" Help ")
-            .title_style(self.style.title)
-            .borders(Borders::ALL)
-            .border_style(self.style.border);
-
-        // Update visible_height via interior mutability.
-        let inner_height = block.inner(overlay).height as usize;
-        self.visible_height.set(inner_height as u16);
-        let total_lines = lines.len();
-        let max_scroll = total_lines.saturating_sub(inner_height);
-        let offset = self.scroll_offset.min(max_scroll);
-
-        let paragraph = Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false })
-            .scroll((offset as u16, 0));
-
-        frame.render_widget(paragraph, overlay);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use boba_core::component::Component;
-    use crossterm::event::{KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent {
-            code,
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        }
-    }
+    #[test]
+    fn short_help_line_produces_expected_spans() {
+        let help = Help::new().with_bindings(vec![
+            HelpBinding {
+                keys: "q".into(),
+                description: "Quit".into(),
+                group: "General".into(),
+            },
+            HelpBinding {
+                keys: "?".into(),
+                description: "Help".into(),
+                group: "General".into(),
+            },
+        ]);
 
-    fn make_help(binding_count: usize) -> Help {
-        let mut h = Help::new();
-        for i in 0..binding_count {
-            h.add_binding(format!("key{i}"), format!("desc{i}"), "group".to_string());
-        }
-        h.show();
-        h
+        let line = help.short_help_line();
+        let spans = line.spans;
+        // First entry: key, space, desc
+        assert_eq!(spans[0].content, "q");
+        assert_eq!(spans[1].content, " ");
+        assert_eq!(spans[2].content, "Quit");
+        // Separator
+        assert_eq!(spans[3].content, " \u{2022} ");
+        // Second entry: key, space, desc
+        assert_eq!(spans[4].content, "?");
+        assert_eq!(spans[5].content, " ");
+        assert_eq!(spans[6].content, "Help");
     }
 
     #[test]
-    fn page_down_scrolls_by_visible_height() {
-        let mut h = make_help(100);
-        // Default visible_height is 24.
-        assert_eq!(h.scroll_offset, 0);
+    fn short_help_line_truncates_with_ellipsis() {
+        let help = Help::new().with_max_width(10).with_bindings(vec![
+            HelpBinding {
+                keys: "q".into(),
+                description: "Quit".into(),
+                group: "General".into(),
+            },
+            HelpBinding {
+                keys: "?".into(),
+                description: "Help".into(),
+                group: "General".into(),
+            },
+        ]);
 
-        h.update(Message::KeyPress(key(KeyCode::PageDown)));
-        assert_eq!(h.scroll_offset, 24);
-
-        h.update(Message::KeyPress(key(KeyCode::PageDown)));
-        assert_eq!(h.scroll_offset, 48);
+        let line = help.short_help_line();
+        let spans = line.spans;
+        // First entry fits (q + space + Quit = 6 chars)
+        assert_eq!(spans[0].content, "q");
+        assert_eq!(spans[2].content, "Quit");
+        // Second entry would exceed max_width, so ellipsis is appended
+        let last = &spans[spans.len() - 1];
+        assert_eq!(last.content, "\u{2026}");
     }
 
     #[test]
-    fn page_up_scrolls_by_visible_height() {
-        let mut h = make_help(100);
-        h.scroll_offset = 50;
+    fn full_help_view_groups_bindings() {
+        let help = Help::new();
 
-        h.update(Message::KeyPress(key(KeyCode::PageUp)));
-        assert_eq!(h.scroll_offset, 26);
+        let nav = vec![
+            HelpBinding {
+                keys: "up".into(),
+                description: "Move up".into(),
+                group: "Navigation".into(),
+            },
+            HelpBinding {
+                keys: "down".into(),
+                description: "Move down".into(),
+                group: "Navigation".into(),
+            },
+        ];
+        let general = vec![HelpBinding {
+            keys: "q".into(),
+            description: "Quit".into(),
+            group: "General".into(),
+        }];
 
-        h.update(Message::KeyPress(key(KeyCode::PageUp)));
-        assert_eq!(h.scroll_offset, 2);
+        let groups = vec![nav, general];
+        let lines = help.full_help_view(&groups);
+        // Group header "Navigation", 2 bindings, blank line, group header "General", 1 binding
+        assert_eq!(lines.len(), 6);
+        // First line is the Navigation group header
+        assert_eq!(lines[0].spans[0].content, "Navigation");
+        // Blank separator between groups
+        assert_eq!(lines[3].spans.len(), 0); // blank Line::raw("")
+                                             // General header
+        assert_eq!(lines[4].spans[0].content, "General");
     }
 
     #[test]
-    fn page_up_saturates_at_zero() {
-        let mut h = make_help(100);
-        h.scroll_offset = 10;
-
-        h.update(Message::KeyPress(key(KeyCode::PageUp)));
-        assert_eq!(h.scroll_offset, 0);
+    fn full_help_view_empty_bindings_returns_empty() {
+        let help = Help::new();
+        let lines = help.full_help_view(&[]);
+        assert!(lines.is_empty());
     }
 
     #[test]
-    fn page_down_clamps_at_max() {
-        let mut h = make_help(30);
-        // visible_height defaults to 24, bindings.len() == 30.
-        h.scroll_offset = 20;
-
-        h.update(Message::KeyPress(key(KeyCode::PageDown)));
-        // 20 + 24 = 44, clamped to 30.
-        assert_eq!(h.scroll_offset, 30);
-    }
-
-    #[test]
-    fn home_scrolls_to_top() {
-        let mut h = make_help(100);
-        h.scroll_offset = 42;
-
-        h.update(Message::KeyPress(key(KeyCode::Home)));
-        assert_eq!(h.scroll_offset, 0);
-    }
-
-    #[test]
-    fn end_scrolls_to_bottom() {
-        let mut h = make_help(100);
-        assert_eq!(h.scroll_offset, 0);
-
-        h.update(Message::KeyPress(key(KeyCode::End)));
-        assert_eq!(h.scroll_offset, 100);
-    }
-
-    #[test]
-    fn page_keys_no_op_when_hidden() {
-        let mut h = make_help(100);
-        h.hide();
-
-        h.update(Message::KeyPress(key(KeyCode::PageDown)));
-        assert_eq!(h.scroll_offset, 0);
-
-        h.update(Message::KeyPress(key(KeyCode::PageUp)));
-        assert_eq!(h.scroll_offset, 0);
-
-        h.update(Message::KeyPress(key(KeyCode::Home)));
-        assert_eq!(h.scroll_offset, 0);
-
-        h.update(Message::KeyPress(key(KeyCode::End)));
-        assert_eq!(h.scroll_offset, 0);
-    }
-
-    #[test]
-    fn custom_visible_height_affects_page_scroll() {
-        let mut h = make_help(100);
-        h.visible_height.set(10);
-
-        h.update(Message::KeyPress(key(KeyCode::PageDown)));
-        assert_eq!(h.scroll_offset, 10);
-
-        h.update(Message::KeyPress(key(KeyCode::PageUp)));
-        assert_eq!(h.scroll_offset, 0);
+    fn bindings_accessor_returns_added_bindings() {
+        let mut help = Help::new();
+        help.add_binding("q", "Quit", "General");
+        help.add_binding("?", "Help", "General");
+        assert_eq!(help.bindings().len(), 2);
+        assert_eq!(help.bindings()[0].keys, "q");
+        assert_eq!(help.bindings()[1].keys, "?");
     }
 }

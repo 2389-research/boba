@@ -14,6 +14,7 @@ use boba::ratatui::style::{Color, Modifier, Style};
 use boba::ratatui::text::{Line, Span};
 use boba::ratatui::widgets::Paragraph;
 use boba::ratatui::Frame;
+use boba::widgets::chrome::focus_block;
 use boba::widgets::filepicker::{self, FilePicker};
 use boba::widgets::viewport::{self, Viewport};
 use boba::{terminal_events, Command, Component, Model, Subscription, TerminalEvent};
@@ -157,8 +158,15 @@ impl Model for FileBrowser {
             Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
                 .areas(main_area);
 
-        self.picker.view(frame, picker_area);
-        self.preview.view(frame, preview_area);
+        let block = focus_block("Files", self.picker.focused());
+        let inner = block.inner(picker_area);
+        frame.render_widget(block, picker_area);
+        self.picker.view(frame, inner);
+
+        let block = focus_block("Preview", self.preview.focused());
+        let inner = block.inner(preview_area);
+        frame.render_widget(block, preview_area);
+        self.preview.view(frame, inner);
 
         // Status bar
         let focus_label = match self.focus {

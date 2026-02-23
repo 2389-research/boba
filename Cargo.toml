@@ -6,7 +6,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-rust-version = "1.75"
+rust-version = "1.86"
 repository = "https://github.com/TODO/boba"
 homepage = "https://github.com/TODO/boba"
 keywords = ["tui", "terminal", "ratatui", "elm-architecture", "bubble-tea"]
@@ -16,8 +16,8 @@ categories = ["command-line-interface"]
 boba = { path = "crates/boba" }
 boba-core = { path = "crates/boba-core" }
 boba-widgets = { path = "crates/boba-widgets" }
-ratatui = "0.29"
-crossterm = { version = "0.28", features = ["event-stream"] }
+ratatui = "0.30"
+crossterm = { version = "0.29", features = ["event-stream"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 tokio-stream = "0.1"

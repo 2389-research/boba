@@ -1,14 +1,13 @@
 //! Data table component with row and column navigation, sorting, per-row
 //! styling, and CSV parsing.
 
+use crate::selection::SelectionState;
 use boba_core::command::Command;
 use boba_core::component::Component;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{
-    Block, Borders, Cell as RatatuiCell, Row, Table as RatatuiTable, TableState,
-};
+use ratatui::widgets::{Block, Cell as RatatuiCell, Row, Table as RatatuiTable, TableState};
 use ratatui::Frame;
 use std::cell::Cell as StdCell;
 
@@ -144,11 +143,14 @@ pub struct Table {
     rows: Vec<Vec<String>>,
     widths: Vec<Constraint>,
     state: TableState,
+    selection: SelectionState,
     focus: bool,
     style: TableStyle,
     title: String,
+    /// Cached visible row count from the last render, used for page navigation.
     visible_height: StdCell<usize>,
     selected_col: Option<usize>,
+    block: Option<Block<'static>>,
     row_style_fn: Option<RowStyleFn>,
     key_seq: boba_core::key_sequence::KeySequenceTracker,
     key_bindings: TableKeyBindings,
@@ -165,10 +167,6 @@ pub struct TableStyle {
     pub normal: Style,
     /// Style applied to the currently highlighted row.
     pub selected: Style,
-    /// Border style when the table has focus.
-    pub focused_border: Style,
-    /// Border style when the table does not have focus.
-    pub unfocused_border: Style,
     /// Symbol rendered to the left of the selected row (e.g. "▸ ").
     pub highlight_symbol: String,
     /// Style applied to the active cell when column navigation is enabled.
@@ -185,8 +183,6 @@ impl Default for TableStyle {
             selected: Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-            focused_border: Style::default().fg(Color::Cyan),
-            unfocused_border: Style::default().fg(Color::DarkGray),
             highlight_symbol: "▸ ".to_string(),
             active_cell: Style::default()
                 .add_modifier(Modifier::BOLD)
@@ -211,16 +207,19 @@ impl Table {
         if !rows.is_empty() {
             state.select(Some(0));
         }
+        let selection = SelectionState::new(rows.len(), 10);
         Self {
             headers,
             rows,
             widths,
             state,
+            selection,
             focus: false,
             style: TableStyle::default(),
             title: String::new(),
             visible_height: StdCell::new(10),
             selected_col: None,
+            block: None,
             row_style_fn: None,
             key_seq: boba_core::key_sequence::KeySequenceTracker::new(),
             key_bindings: TableKeyBindings::default(),
@@ -270,6 +269,12 @@ impl Table {
         self
     }
 
+    /// Set an optional block (border/chrome) around the table.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
+        self
+    }
+
     /// Set the table style configuration.
     pub fn with_style(mut self, style: TableStyle) -> Self {
         self.style = style;
@@ -299,7 +304,11 @@ impl Table {
 
     /// Return the index of the currently selected row, if any.
     pub fn selected(&self) -> Option<usize> {
-        self.state.selected()
+        if self.rows.is_empty() {
+            None
+        } else {
+            Some(self.selection.cursor())
+        }
     }
 
     /// Get the currently selected column index, if column navigation is active.
@@ -315,63 +324,48 @@ impl Table {
     /// Replace the data rows, clamping the selection to the new bounds.
     pub fn set_rows(&mut self, rows: Vec<Vec<String>>) {
         self.rows = rows;
+        self.selection.set_count(self.rows.len());
+        self.sync_table_state();
+    }
+
+    /// Sync the ratatui `TableState` selection and offset from `SelectionState`.
+    fn sync_table_state(&mut self) {
         if self.rows.is_empty() {
             self.state.select(None);
-        } else if let Some(i) = self.state.selected() {
-            if i >= self.rows.len() {
-                self.state.select(Some(self.rows.len() - 1));
-            }
+        } else {
+            self.state.select(Some(self.selection.cursor()));
         }
+        *self.state.offset_mut() = self.selection.offset();
     }
 
     fn select_next(&mut self) {
-        if self.rows.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let next = if i + 1 >= self.rows.len() { 0 } else { i + 1 };
-        self.state.select(Some(next));
+        self.selection.move_down();
+        self.sync_table_state();
     }
 
     fn select_prev(&mut self) {
-        if self.rows.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let prev = if i == 0 {
-            self.rows.len().saturating_sub(1)
-        } else {
-            i - 1
-        };
-        self.state.select(Some(prev));
+        self.selection.move_up();
+        self.sync_table_state();
     }
 
     /// Move the cursor up by `n` rows, clamped to the first row.
     pub fn move_up(&mut self, n: usize) {
-        if self.rows.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        self.state.select(Some(i.saturating_sub(n)));
+        let new = self.selection.cursor().saturating_sub(n);
+        self.selection.select(new);
+        self.sync_table_state();
     }
 
     /// Move the cursor down by `n` rows, clamped to the last row.
     pub fn move_down(&mut self, n: usize) {
-        if self.rows.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let last = self.rows.len().saturating_sub(1);
-        self.state.select(Some((i + n).min(last)));
+        let new = self.selection.cursor() + n;
+        self.selection.select(new); // select() clamps to count-1
+        self.sync_table_state();
     }
 
     /// Jump to a specific row index, clamped to valid range.
     pub fn set_cursor(&mut self, n: usize) {
-        if self.rows.is_empty() {
-            return;
-        }
-        let last = self.rows.len().saturating_sub(1);
-        self.state.select(Some(n.min(last)));
+        self.selection.select(n);
+        self.sync_table_state();
     }
 
     /// Alias for `selected()`.
@@ -431,6 +425,9 @@ impl Component for Table {
     type Message = Message;
 
     fn update(&mut self, msg: Message) -> Command<Message> {
+        // Sync the cached visible height from the last render into SelectionState.
+        self.selection.set_visible(self.visible_height.get());
+
         match msg {
             Message::KeyPress(key) if self.focus => {
                 // Check for gg sequence (vim go-to-first)
@@ -471,25 +468,29 @@ impl Component for Table {
                     self.move_col_next_wrap();
                     Command::none()
                 } else if self.key_bindings.page_up.matches(&key) {
-                    self.move_up(self.visible_height.get());
+                    self.selection.page_up();
+                    self.sync_table_state();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
                     Command::none()
                 } else if self.key_bindings.page_down.matches(&key) {
-                    self.move_down(self.visible_height.get());
+                    self.selection.page_down();
+                    self.sync_table_state();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
                     Command::none()
                 } else if self.key_bindings.half_down.matches(&key) {
-                    self.move_down(self.visible_height.get() / 2);
+                    self.selection.half_page_down();
+                    self.sync_table_state();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
                     Command::none()
                 } else if self.key_bindings.half_up.matches(&key) {
-                    self.move_up(self.visible_height.get() / 2);
+                    self.selection.half_page_up();
+                    self.sync_table_state();
                     if let Some(i) = self.selected() {
                         return Command::message(Message::SelectRow(i));
                     }
@@ -519,7 +520,8 @@ impl Component for Table {
             }
             Message::SelectRow(i) => {
                 if i < self.rows.len() {
-                    self.state.select(Some(i));
+                    self.selection.select(i);
+                    self.sync_table_state();
                 }
                 Command::none()
             }
@@ -528,22 +530,16 @@ impl Component for Table {
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
-        let border_style = if self.focus {
-            self.style.focused_border
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(area);
+            frame.render_widget(block.clone(), area);
+            inner
         } else {
-            self.style.unfocused_border
+            area
         };
 
-        let mut block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style);
-
-        if !self.title.is_empty() {
-            block = block.title(self.title.as_str());
-        }
-
-        // Track visible height for page navigation (border top/bottom + header + margin).
-        let inner_height = block.inner(area).height as usize;
+        // Track visible height for page navigation (header + margin).
+        let inner_height = inner.height as usize;
         // header row (1) + bottom margin (1) = 2 rows consumed by header
         let data_height = inner_height.saturating_sub(2);
         self.visible_height
@@ -595,11 +591,10 @@ impl Component for Table {
 
         let table = RatatuiTable::new(rows, &self.widths)
             .header(header)
-            .block(block)
             .row_highlight_style(self.style.selected)
             .highlight_symbol(self.style.highlight_symbol.as_str());
 
-        frame.render_stateful_widget(table, area, &mut self.state.clone());
+        frame.render_stateful_widget(table, inner, &mut self.state.clone());
     }
 
     fn focused(&self) -> bool {

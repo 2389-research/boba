@@ -4,7 +4,7 @@
 //! competing for keyboard input, the [`InputLayer`] enum provides a
 //! declarative way to express which layer should handle events.
 //!
-//! The [`LayeredModel`] trait extends [`Model`] with an `active_layer()`
+//! The [`LayeredModel`] trait extends [`Model`](crate::Model) with an `active_layer()`
 //! method. The top-level `update()` can use this to route key events
 //! cleanly:
 //!

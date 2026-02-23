@@ -8,95 +8,114 @@ use boba_core::subscription::Subscription;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::key::Binding;
+use crate::selection::SelectionState;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, HighlightSpacing, List as RatatuiList, ListItem, ListState, Paragraph,
+    Block, HighlightSpacing, List as RatatuiList, ListItem, ListState, Paragraph,
 };
 use ratatui::Frame;
 use std::cell::Cell;
 
-/// A list item with a name and optional description.
-#[derive(Debug, Clone)]
-pub struct Item {
-    /// The display name of the item.
-    pub name: String,
-    /// An optional description shown below the item name.
-    pub description: Option<String>,
+/// Trait for types that can be displayed in a list.
+///
+/// Any domain type can implement this trait to be used directly with [`List`]
+/// without converting into an intermediate struct. This mirrors the Bubble Tea
+/// `Item` interface where only `FilterValue() string` is required.
+///
+/// # Example
+///
+/// ```ignore
+/// struct Task {
+///     title: String,
+///     priority: u8,
+///     done: bool,
+/// }
+///
+/// impl list::Item for Task {
+///     fn filter_value(&self) -> &str {
+///         &self.title
+///     }
+///     fn description(&self) -> Option<&str> {
+///         None
+///     }
+/// }
+///
+/// // Use domain types directly — no conversion needed
+/// let list = List::new(vec![
+///     Task { title: "Fix bug".into(), priority: 1, done: false },
+///     Task { title: "Write tests".into(), priority: 2, done: true },
+/// ]);
+/// ```
+pub trait Item: Send + 'static {
+    /// Text used for filtering and as the default display label.
+    fn filter_value(&self) -> &str;
+
+    /// Optional description shown below the label by the default delegate.
+    /// Returns `None` by default.
+    fn description(&self) -> Option<&str> {
+        None
+    }
 }
 
-impl Item {
-    /// Create a new item with the given name and no description.
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            description: None,
-        }
-    }
-
-    /// Attach a description to this item.
-    pub fn with_description(mut self, desc: impl Into<String>) -> Self {
-        self.description = Some(desc.into());
+impl Item for String {
+    fn filter_value(&self) -> &str {
         self
     }
 }
 
-impl<S: Into<String>> From<S> for Item {
-    fn from(s: S) -> Self {
-        Item::new(s)
+impl Item for &'static str {
+    fn filter_value(&self) -> &str {
+        self
     }
 }
 
 /// Trait for custom list item rendering.
 ///
+/// The type parameter `I` is the concrete item type stored in the list,
+/// giving the delegate full access to domain fields for rendering.
+///
 /// # Example
 /// ```ignore
-/// struct ColoredDelegate;
-/// impl ItemDelegate for ColoredDelegate {
-///     fn render<'a>(&'a self, item: &'a Item, index: usize, selected: bool, _width: u16) -> Vec<Line<'a>> {
-///         let style = if index % 2 == 0 {
-///             Style::default().fg(Color::White)
+/// struct TaskDelegate;
+/// impl ItemDelegate<Task> for TaskDelegate {
+///     fn render<'a>(&'a self, task: &'a Task, _index: usize, selected: bool, _width: u16) -> Vec<Line<'a>> {
+///         let check = if task.done { "✓" } else { " " };
+///         let style = if selected {
+///             Style::default().fg(Color::Cyan)
 ///         } else {
-///             Style::default().fg(Color::Gray)
+///             Style::default()
 ///         };
-///         vec![Line::styled(&item.name, style)]
+///         vec![Line::styled(format!("[{}] {}", check, task.title), style)]
 ///     }
 /// }
 /// ```
-pub trait ItemDelegate: Send {
+pub trait ItemDelegate<I: Item>: Send {
     /// Render a list item. Returns one or more Lines for display.
-    /// - `item`: the item with name and optional description
+    /// - `item`: the domain item (full access to all fields)
     /// - `index`: original index in the items list
     /// - `selected`: whether this item is currently selected
     /// - `width`: available width in columns
-    fn render<'a>(
-        &'a self,
-        item: &'a Item,
-        index: usize,
-        selected: bool,
-        width: u16,
-    ) -> Vec<Line<'a>>;
+    fn render<'a>(&'a self, item: &'a I, index: usize, selected: bool, width: u16)
+        -> Vec<Line<'a>>;
 }
 
-/// Default delegate that renders items as plain text.
-/// When an item has a description, it is rendered as a second line in dimmed style.
+/// Default delegate that renders [`Item::filter_value`] as the label
+/// and [`Item::description`] as a dimmed second line when present.
 pub struct DefaultDelegate;
 
-impl ItemDelegate for DefaultDelegate {
+impl<I: Item> ItemDelegate<I> for DefaultDelegate {
     fn render<'a>(
         &'a self,
-        item: &'a Item,
+        item: &'a I,
         _index: usize,
         _selected: bool,
         _width: u16,
     ) -> Vec<Line<'a>> {
-        let mut lines = vec![Line::raw(&item.name)];
-        if let Some(ref desc) = item.description {
-            lines.push(Line::styled(
-                desc.as_str(),
-                Style::default().fg(Color::DarkGray),
-            ));
+        let mut lines = vec![Line::raw(item.filter_value())];
+        if let Some(desc) = item.description() {
+            lines.push(Line::styled(desc, Style::default().fg(Color::DarkGray)));
         }
         lines
     }
@@ -121,7 +140,7 @@ pub enum Message {
 
 /// Configurable key bindings for the list component.
 ///
-/// Each field is a [`Binding`](crate::key::Binding) that maps one or more
+/// Each field is a [`Binding`] that maps one or more
 /// key combinations to an action. The defaults match vim-style navigation.
 /// Override individual fields to customise keys:
 ///
@@ -214,33 +233,37 @@ impl crate::key::KeyMap for ListKeyBindings {
 
 /// A selectable list with vim-style navigation, filtering, and custom rendering.
 ///
+/// The type parameter `I` is the item type stored in the list. Any type
+/// implementing [`Item`] works — from plain `String`s to rich domain structs.
+///
 /// Items can be filtered interactively by pressing `/`. A loading spinner
 /// is shown when `with_loading(true)` is set. Custom item rendering is
-/// available through the [`ItemDelegate`] trait.
+/// available through the [`ItemDelegate`] trait which receives `&I` directly,
+/// giving full access to domain fields.
 ///
 /// # Example
 ///
 /// ```ignore
-/// let items = vec![
-///     Item::new("Apple").with_description("A fruit"),
-///     Item::new("Banana"),
-///     Item::new("Cherry"),
-/// ];
-/// let mut list = List::new(items).with_title("Fruits");
-/// list.focus();
+/// // Simple: plain strings
+/// let list = List::new(vec!["Apple".to_string(), "Banana".to_string()]);
+///
+/// // Rich: domain types with custom delegate
+/// let list = List::new(tasks).with_delegate(TaskDelegate);
 /// ```
-pub struct List {
-    items: Vec<Item>,
+pub struct List<I: Item> {
+    items: Vec<I>,
     state: ListState,
     focus: bool,
     style: ListStyle,
+    block: Option<Block<'static>>,
     title: String,
     filter: Option<String>,
     filtering: bool,
     filtered_indices: Vec<usize>,
+    selection: SelectionState,
     visible_height: Cell<usize>,
     status_message: Option<String>,
-    delegate: Box<dyn ItemDelegate>,
+    delegate: Box<dyn ItemDelegate<I>>,
     loading: bool,
     spinner: Option<crate::spinner::Spinner>,
     key_seq: KeySequenceTracker,
@@ -254,10 +277,6 @@ pub struct ListStyle {
     pub normal: Style,
     /// Style applied to the currently highlighted item.
     pub selected: Style,
-    /// Border style when the list has focus.
-    pub focused_border: Style,
-    /// Border style when the list does not have focus.
-    pub unfocused_border: Style,
     /// Symbol rendered to the left of the selected item (e.g. "▸ ").
     pub highlight_symbol: String,
 }
@@ -269,32 +288,33 @@ impl Default for ListStyle {
             selected: Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-            focused_border: Style::default().fg(Color::Cyan),
-            unfocused_border: Style::default().fg(Color::DarkGray),
             highlight_symbol: "▸ ".to_string(),
         }
     }
 }
 
-impl List {
+impl<I: Item> List<I> {
     /// Create a list from a vector of items.
     ///
     /// The first item is selected automatically when the list is non-empty.
-    pub fn new(items: Vec<Item>) -> Self {
+    pub fn new(items: Vec<I>) -> Self {
         let mut state = ListState::default();
         if !items.is_empty() {
             state.select(Some(0));
         }
-        let filtered_indices = (0..items.len()).collect();
+        let count = items.len();
+        let filtered_indices = (0..count).collect();
         Self {
             items,
             state,
             focus: false,
             style: ListStyle::default(),
+            block: None,
             title: String::new(),
             filter: None,
             filtering: false,
             filtered_indices,
+            selection: SelectionState::new(count, 10),
             visible_height: Cell::new(10),
             status_message: None,
             delegate: Box::new(DefaultDelegate),
@@ -311,6 +331,21 @@ impl List {
         self
     }
 
+    /// Set an optional block (border/chrome) around the list.
+    ///
+    /// When `None` (the default), the list renders borderless, using the
+    /// full area. Callers who want a border can supply their own `Block`:
+    ///
+    /// ```ignore
+    /// use ratatui::widgets::{Block, Borders};
+    /// let list = List::new(items)
+    ///     .with_block(Block::default().borders(Borders::ALL).title("My List"));
+    /// ```
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
+        self
+    }
+
     /// Set the list style configuration.
     pub fn with_style(mut self, style: ListStyle) -> Self {
         self.style = style;
@@ -318,7 +353,7 @@ impl List {
     }
 
     /// Set a custom item delegate for rendering list items.
-    pub fn with_delegate(mut self, delegate: impl ItemDelegate + 'static) -> Self {
+    pub fn with_delegate(mut self, delegate: impl ItemDelegate<I> + 'static) -> Self {
         self.delegate = Box::new(delegate);
         self
     }
@@ -366,30 +401,42 @@ impl List {
 
     /// Returns the selected index in the original (unfiltered) items list.
     pub fn selected(&self) -> Option<usize> {
-        self.state
-            .selected()
-            .and_then(|i| self.filtered_indices.get(i).copied())
+        if self.filtered_indices.is_empty() {
+            None
+        } else {
+            self.filtered_indices.get(self.selection.cursor()).copied()
+        }
     }
 
-    /// Return the name of the currently selected item, if any.
-    pub fn selected_item(&self) -> Option<&str> {
-        self.selected()
-            .and_then(|i| self.items.get(i).map(|item| item.name.as_str()))
+    /// Programmatically set the selected index (in the original items list).
+    /// If the index is out of range, it will be clamped.
+    pub fn set_selected(&mut self, index: usize) {
+        if self.filtered_indices.is_empty() {
+            self.state.select(None);
+            return;
+        }
+        // Find the position of `index` in filtered_indices
+        if let Some(pos) = self.filtered_indices.iter().position(|&i| i == index) {
+            self.selection.select(pos);
+        } else {
+            // If not found in filtered view, select the closest or last
+            let clamped = index.min(self.filtered_indices.len() - 1);
+            self.selection.select(clamped);
+        }
+        self.sync_list_state();
+    }
+
+    /// Return a reference to the currently selected item, if any.
+    pub fn selected_item(&self) -> Option<&I> {
+        self.selected().and_then(|i| self.items.get(i))
     }
 
     /// Replace all items, rebuilding the filter and clamping the selection.
-    pub fn set_items(&mut self, items: Vec<Item>) {
+    pub fn set_items(&mut self, items: Vec<I>) {
         self.items = items;
         self.rebuild_filtered_indices();
-        if self.filtered_indices.is_empty() {
-            self.state.select(None);
-        } else if self.state.selected().is_none() {
-            self.state.select(Some(0));
-        } else if let Some(i) = self.state.selected() {
-            if i >= self.filtered_indices.len() {
-                self.state.select(Some(self.filtered_indices.len() - 1));
-            }
-        }
+        self.selection.set_count(self.filtered_indices.len());
+        self.sync_list_state();
     }
 
     // --- Filtering ---
@@ -415,7 +462,7 @@ impl List {
                     .items
                     .iter()
                     .enumerate()
-                    .filter(|(_, item)| item.name.to_lowercase().contains(&lower))
+                    .filter(|(_, item)| item.filter_value().to_lowercase().contains(&lower))
                     .map(|(i, _)| i)
                     .collect();
             }
@@ -436,71 +483,49 @@ impl List {
         self.filtering = false;
         self.filter = None;
         self.rebuild_filtered_indices();
-        // Restore selection to beginning of full list
-        if self.filtered_indices.is_empty() {
-            self.state.select(None);
-        } else {
-            self.state.select(Some(0));
-        }
+        self.selection.set_count(self.filtered_indices.len());
+        self.selection.home();
+        self.sync_list_state();
     }
 
     fn apply_filter(&mut self, value: String) {
         self.filter = Some(value);
         self.rebuild_filtered_indices();
-        // Reset selection within filtered results
-        if self.filtered_indices.is_empty() {
-            self.state.select(None);
-        } else {
-            self.state.select(Some(0));
-        }
+        self.selection.set_count(self.filtered_indices.len());
+        self.selection.home();
+        self.sync_list_state();
     }
 
     // --- Item manipulation ---
 
     /// Insert an item at the given index, rebuilding the filter.
-    pub fn insert_item(&mut self, index: usize, item: Item) {
+    pub fn insert_item(&mut self, index: usize, item: I) {
         let index = index.min(self.items.len());
         self.items.insert(index, item);
         self.rebuild_filtered_indices();
-        // Fix up selection
-        if self.filtered_indices.is_empty() {
-            self.state.select(None);
-        } else if self.state.selected().is_none() {
-            self.state.select(Some(0));
-        }
+        self.selection.set_count(self.filtered_indices.len());
+        self.sync_list_state();
     }
 
     /// Remove and return the item at the given index, if it exists.
-    pub fn remove_item(&mut self, index: usize) -> Option<Item> {
+    pub fn remove_item(&mut self, index: usize) -> Option<I> {
         if index >= self.items.len() {
             return None;
         }
         let removed = self.items.remove(index);
         self.rebuild_filtered_indices();
-        if self.filtered_indices.is_empty() {
-            self.state.select(None);
-        } else if let Some(sel) = self.state.selected() {
-            if sel >= self.filtered_indices.len() {
-                self.state.select(Some(self.filtered_indices.len() - 1));
-            }
-        }
+        self.selection.set_count(self.filtered_indices.len());
+        self.sync_list_state();
         Some(removed)
     }
 
     /// Replace the item at the given index, rebuilding the filter.
-    pub fn set_item(&mut self, index: usize, item: Item) {
+    pub fn set_item(&mut self, index: usize, item: I) {
         if index < self.items.len() {
             self.items[index] = item;
             self.rebuild_filtered_indices();
-            if let Some(sel) = self.state.selected() {
-                if sel >= self.filtered_indices.len() {
-                    if self.filtered_indices.is_empty() {
-                        self.state.select(None);
-                    } else {
-                        self.state.select(Some(self.filtered_indices.len() - 1));
-                    }
-                }
-            }
+            self.selection.set_count(self.filtered_indices.len());
+            self.sync_list_state();
         }
     }
 
@@ -519,83 +544,70 @@ impl List {
     // --- Navigation helpers ---
 
     fn select_next(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let next = if i + 1 >= self.filtered_indices.len() {
-            0
-        } else {
-            i + 1
-        };
-        self.state.select(Some(next));
+        self.sync_selection_visible();
+        self.selection.move_down();
+        self.sync_list_state();
     }
 
     fn select_prev(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let prev = if i == 0 {
-            self.filtered_indices.len().saturating_sub(1)
-        } else {
-            i - 1
-        };
-        self.state.select(Some(prev));
+        self.sync_selection_visible();
+        self.selection.move_up();
+        self.sync_list_state();
     }
 
     fn select_first(&mut self) {
-        if !self.filtered_indices.is_empty() {
-            self.state.select(Some(0));
-        }
+        self.sync_selection_visible();
+        self.selection.home();
+        self.sync_list_state();
     }
 
     fn select_last(&mut self) {
-        if !self.filtered_indices.is_empty() {
-            self.state.select(Some(self.filtered_indices.len() - 1));
-        }
+        self.sync_selection_visible();
+        self.selection.end();
+        self.sync_list_state();
     }
 
     fn select_page_down(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let next = (i + self.visible_height.get()).min(self.filtered_indices.len() - 1);
-        self.state.select(Some(next));
+        self.sync_selection_visible();
+        self.selection.page_down();
+        self.sync_list_state();
     }
 
     fn select_page_up(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let prev = i.saturating_sub(self.visible_height.get());
-        self.state.select(Some(prev));
+        self.sync_selection_visible();
+        self.selection.page_up();
+        self.sync_list_state();
     }
 
     fn select_half_page_down(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let i = self.state.selected().unwrap_or(0);
-        let half = self.visible_height.get() / 2;
-        let next = (i + half).min(self.filtered_indices.len() - 1);
-        self.state.select(Some(next));
+        self.sync_selection_visible();
+        self.selection.half_page_down();
+        self.sync_list_state();
     }
 
     fn select_half_page_up(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
+        self.sync_selection_visible();
+        self.selection.half_page_up();
+        self.sync_list_state();
+    }
+
+    fn sync_selection_visible(&mut self) {
+        let h = self.visible_height.get();
+        if self.selection.visible() != h {
+            self.selection.set_visible(h);
         }
-        let i = self.state.selected().unwrap_or(0);
-        let half = self.visible_height.get() / 2;
-        let prev = i.saturating_sub(half);
-        self.state.select(Some(prev));
+    }
+
+    fn sync_list_state(&mut self) {
+        if self.filtered_indices.is_empty() {
+            self.state.select(None);
+        } else {
+            self.state.select(Some(self.selection.cursor()));
+        }
     }
 }
 
-impl Component for List {
+impl<I: Item> Component for List<I> {
     type Message = Message;
 
     fn update(&mut self, msg: Message) -> Command<Message> {
@@ -738,7 +750,8 @@ impl Component for List {
                 if i < self.items.len() {
                     // Find the position in filtered_indices that maps to original index i
                     if let Some(pos) = self.filtered_indices.iter().position(|&idx| idx == i) {
-                        self.state.select(Some(pos));
+                        self.selection.select(pos);
+                        self.sync_list_state();
                     }
                 }
                 Command::none()
@@ -758,19 +771,13 @@ impl Component for List {
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
-        let border_style = if self.focus {
-            self.style.focused_border
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(area);
+            frame.render_widget(block.clone(), area);
+            inner
         } else {
-            self.style.unfocused_border
+            area
         };
-
-        let mut block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style);
-
-        if !self.title.is_empty() {
-            block = block.title(self.title.as_str());
-        }
 
         // Determine layout sections
         let has_spinner_line = self.loading && self.spinner.is_some();
@@ -779,11 +786,6 @@ impl Component for List {
         // Show a "Filter: {text}" indicator at the bottom when a non-empty filter is active
         let has_filter_display =
             !self.filtering && self.filter.as_ref().is_some_and(|f| !f.is_empty());
-
-        let inner = block.inner(area);
-
-        // Render the outer block first
-        frame.render_widget(block, area);
 
         if inner.height == 0 || inner.width == 0 {
             return;
@@ -844,12 +846,9 @@ impl Component for List {
         let items: Vec<ListItem> = self
             .filtered_indices
             .iter()
-            .map(|&i| {
-                let selected = self
-                    .state
-                    .selected()
-                    .and_then(|s| self.filtered_indices.get(s).copied())
-                    == Some(i);
+            .enumerate()
+            .map(|(pos, &i)| {
+                let selected = !self.filtered_indices.is_empty() && pos == self.selection.cursor();
                 let lines = self
                     .delegate
                     .render(&self.items[i], i, selected, list_area.width);
@@ -859,7 +858,7 @@ impl Component for List {
 
         let list = RatatuiList::new(items)
             .highlight_style(self.style.selected)
-            .highlight_symbol(&self.style.highlight_symbol)
+            .highlight_symbol(self.style.highlight_symbol.as_str())
             .highlight_spacing(HighlightSpacing::Always);
 
         frame.render_stateful_widget(list, list_area, &mut self.state.clone());

@@ -7,11 +7,9 @@ use boba_core::command::Command;
 use boba_core::component::Component;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Text};
-use ratatui::widgets::{
-    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-};
+use ratatui::widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
 
 use crate::runeutil;
@@ -151,6 +149,9 @@ pub struct Viewport {
     h_offset: u16,
     focus: bool,
     style: ViewportStyle,
+    /// Optional surrounding block (border/title). When `None` the viewport is
+    /// borderless and uses the full area.
+    block: Option<Block<'static>>,
     mouse_wheel_enabled: bool,
     mouse_wheel_delta: u16,
     /// Updated during each `view()` call via interior mutability.
@@ -160,24 +161,10 @@ pub struct Viewport {
 }
 
 /// Style configuration for the viewport.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ViewportStyle {
-    /// Border style when the viewport does not have focus.
-    pub border: Style,
-    /// Border style when the viewport has focus.
-    pub focused_border: Style,
     /// Style applied to the vertical scrollbar.
     pub scrollbar: Style,
-}
-
-impl Default for ViewportStyle {
-    fn default() -> Self {
-        Self {
-            border: Style::default().fg(Color::DarkGray),
-            focused_border: Style::default().fg(Color::Cyan),
-            scrollbar: Style::default(),
-        }
-    }
 }
 
 impl Viewport {
@@ -190,6 +177,7 @@ impl Viewport {
             h_offset: 0,
             focus: false,
             style: ViewportStyle::default(),
+            block: None,
             mouse_wheel_enabled: true,
             mouse_wheel_delta: 3,
             visible_height: Cell::new(24),
@@ -245,6 +233,15 @@ impl Viewport {
     /// Set the viewport style configuration.
     pub fn with_style(mut self, style: ViewportStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// Set an optional surrounding block (border, title, etc.).
+    ///
+    /// When no block is set, the viewport renders borderless and uses the
+    /// full area. Provide a [`Block`] to add borders, titles, or padding.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
         self
     }
 
@@ -465,17 +462,13 @@ impl Component for Viewport {
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
-        let border_style = if self.focus {
-            self.style.focused_border
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(area);
+            frame.render_widget(block.clone(), area);
+            inner
         } else {
-            self.style.border
+            area
         };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style);
-
-        let inner = block.inner(area);
 
         // Update visible_height via interior mutability.
         self.visible_height.set(inner.height);
@@ -489,11 +482,9 @@ impl Component for Viewport {
             Text::raw(&self.content)
         };
 
-        let paragraph = Paragraph::new(text)
-            .block(block)
-            .scroll((offset, self.h_offset));
+        let paragraph = Paragraph::new(text).scroll((offset, self.h_offset));
 
-        frame.render_widget(paragraph, area);
+        frame.render_widget(paragraph, inner);
 
         // Render scrollbar if content exceeds visible area
         if self.total_lines() > inner.height {

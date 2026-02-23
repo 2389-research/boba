@@ -7,7 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 use std::path::{Path, PathBuf};
 
@@ -52,10 +52,6 @@ pub struct FilePickerStyle {
     pub file: Style,
     /// Style applied to the currently highlighted entry.
     pub selected: Style,
-    /// Border style when the file picker does not have focus.
-    pub border: Style,
-    /// Border style when the file picker has focus.
-    pub focused_border: Style,
 }
 
 impl Default for FilePickerStyle {
@@ -68,8 +64,6 @@ impl Default for FilePickerStyle {
             selected: Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD | Modifier::REVERSED),
-            border: Style::default().fg(Color::DarkGray),
-            focused_border: Style::default().fg(Color::Cyan),
         }
     }
 }
@@ -90,6 +84,7 @@ pub struct FilePicker {
     height: u16,
     focus: bool,
     style: FilePickerStyle,
+    block: Option<Block<'static>>,
 }
 
 impl FilePicker {
@@ -107,6 +102,7 @@ impl FilePicker {
             height: 10,
             focus: false,
             style: FilePickerStyle::default(),
+            block: None,
         }
     }
 
@@ -144,6 +140,12 @@ impl FilePicker {
     /// Set the file picker style.
     pub fn with_style(mut self, style: FilePickerStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// Set the block (border/title container) for the file picker.
+    pub fn with_block(mut self, block: Block<'static>) -> Self {
+        self.block = Some(block);
         self
     }
 
@@ -378,20 +380,13 @@ impl Component for FilePicker {
             return;
         }
 
-        let border_style = if self.focus {
-            self.style.focused_border
+        let inner = if let Some(ref block) = self.block {
+            let inner = block.inner(area);
+            frame.render_widget(block.clone(), area);
+            inner
         } else {
-            self.style.border
+            area
         };
-
-        let title = self.current_dir.to_string_lossy().to_string();
-        let block = Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_style(border_style);
-
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
 
         if inner.height == 0 || inner.width == 0 {
             return;
