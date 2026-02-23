@@ -328,13 +328,14 @@ impl Table {
         self.sync_table_state();
     }
 
-    /// Sync the ratatui `TableState` selection from `SelectionState`.
+    /// Sync the ratatui `TableState` selection and offset from `SelectionState`.
     fn sync_table_state(&mut self) {
         if self.rows.is_empty() {
             self.state.select(None);
         } else {
             self.state.select(Some(self.selection.cursor()));
         }
+        *self.state.offset_mut() = self.selection.offset();
     }
 
     fn select_next(&mut self) {
