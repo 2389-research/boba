@@ -30,8 +30,12 @@ pub enum ActionLayout {
 pub struct Action {
     /// Display label for the button.
     pub label: String,
-    /// Optional shortcut key (e.g., 'y' for Yes). Shown after the label.
+    /// Optional rich label with multiple styled spans (overrides `label` in rendering).
+    pub label_spans: Option<Vec<Span<'static>>>,
+    /// Optional shortcut key (e.g., 'y' for Yes). Shown before the label.
     pub shortcut: Option<char>,
+    /// Whether the shortcut is case-sensitive (default: false for backward compat).
+    pub shortcut_case_sensitive: bool,
     /// Optional style override for this action when unfocused.
     pub style: Option<Style>,
     /// Optional style override for this action when focused.
@@ -43,7 +47,9 @@ impl Action {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
+            label_spans: None,
             shortcut: None,
+            shortcut_case_sensitive: false,
             style: None,
             focused_style: None,
         }
@@ -52,6 +58,21 @@ impl Action {
     /// Set a shortcut key for this action.
     pub fn with_shortcut(mut self, key: char) -> Self {
         self.shortcut = Some(key);
+        self
+    }
+
+    /// Set a case-sensitive shortcut key for this action.
+    /// Use this when you need to distinguish 'a' from 'A'.
+    pub fn with_shortcut_exact(mut self, key: char) -> Self {
+        self.shortcut = Some(key);
+        self.shortcut_case_sensitive = true;
+        self
+    }
+
+    /// Set rich label spans (overrides the plain `label` string in rendering).
+    /// The shortcut prefix `[key] ` and focus indicator `▸ ` are still prepended automatically.
+    pub fn with_label_spans(mut self, spans: Vec<Span<'static>>) -> Self {
+        self.label_spans = Some(spans);
         self
     }
 
@@ -288,12 +309,18 @@ impl Component for Modal {
                         }
                         Command::none()
                     }
-                    // Check shortcuts
-                    (KeyCode::Char(c), KeyModifiers::NONE) => {
-                        let lower = c.to_ascii_lowercase();
+                    // Check shortcuts (case-insensitive by default, exact if configured)
+                    (KeyCode::Char(c), _) => {
                         for (i, action) in self.actions.iter().enumerate() {
-                            if action.shortcut == Some(lower) {
-                                return Command::message(Message::Select(i));
+                            if let Some(shortcut) = action.shortcut {
+                                let matches = if action.shortcut_case_sensitive {
+                                    shortcut == c
+                                } else {
+                                    shortcut.eq_ignore_ascii_case(&c)
+                                };
+                                if matches {
+                                    return Command::message(Message::Select(i));
+                                }
                             }
                         }
                         Command::none()
@@ -365,15 +392,23 @@ impl Component for Modal {
                         } else {
                             action.style.unwrap_or(self.style.action)
                         };
-                        let label = if let Some(key) = action.shortcut {
-                            format!("[{}] {}", key, action.label)
+                        let prefix = if i == self.focused_action { "▸ " } else { "  " };
+                        spans.push(Span::styled(prefix, style));
+                        if let Some(ref label_spans) = action.label_spans {
+                            if let Some(key) = action.shortcut {
+                                spans.push(Span::styled(
+                                    format!("[{}] ", key),
+                                    Style::default().fg(Color::DarkGray),
+                                ));
+                            }
+                            spans.extend(label_spans.iter().cloned());
                         } else {
-                            action.label.clone()
-                        };
-                        if i == self.focused_action {
-                            spans.push(Span::styled(format!("▸ {}", label), style));
-                        } else {
-                            spans.push(Span::styled(format!("  {}", label), style));
+                            let label = if let Some(key) = action.shortcut {
+                                format!("[{}] {}", key, action.label)
+                            } else {
+                                action.label.clone()
+                            };
+                            spans.push(Span::styled(label, style));
                         }
                     }
 
@@ -389,7 +424,7 @@ impl Component for Modal {
                             ..action_area
                         };
 
-                        let style = if i == self.focused_action {
+                        let base_style = if i == self.focused_action {
                             action.focused_style.unwrap_or(self.style.focused_action)
                         } else {
                             action.style.unwrap_or(self.style.action)
@@ -399,14 +434,30 @@ impl Component for Modal {
                         } else {
                             "  "
                         };
-                        let label = if let Some(key) = action.shortcut {
-                            format!("{}[{}] {}", prefix, key, action.label)
-                        } else {
-                            format!("{}{}", prefix, action.label)
-                        };
 
-                        let action_paragraph = Paragraph::new(Span::styled(label, style));
-                        frame.render_widget(action_paragraph, row_area);
+                        if let Some(ref label_spans) = action.label_spans {
+                            // Rich label: prefix + [key] + custom spans
+                            let mut spans = vec![Span::styled(prefix, base_style)];
+                            if let Some(key) = action.shortcut {
+                                spans.push(Span::styled(
+                                    format!("[{}] ", key),
+                                    Style::default().fg(Color::DarkGray),
+                                ));
+                            }
+                            spans.extend(label_spans.iter().cloned());
+                            let action_paragraph = Paragraph::new(Line::from(spans));
+                            frame.render_widget(action_paragraph, row_area);
+                        } else {
+                            // Plain label: prefix + [key] label as single styled span
+                            let label = if let Some(key) = action.shortcut {
+                                format!("{}[{}] {}", prefix, key, action.label)
+                            } else {
+                                format!("{}{}", prefix, action.label)
+                            };
+                            let action_paragraph =
+                                Paragraph::new(Span::styled(label, base_style));
+                            frame.render_widget(action_paragraph, row_area);
+                        }
                     }
                 }
             }

@@ -154,6 +154,8 @@ pub struct Viewport {
     block: Option<Block<'static>>,
     mouse_wheel_enabled: bool,
     mouse_wheel_delta: u16,
+    /// When true, long lines are word-wrapped to fit the available width.
+    word_wrap: bool,
     /// Updated during each `view()` call via interior mutability.
     visible_height: Cell<u16>,
     key_seq: boba_core::key_sequence::KeySequenceTracker,
@@ -180,6 +182,7 @@ impl Viewport {
             block: None,
             mouse_wheel_enabled: true,
             mouse_wheel_delta: 3,
+            word_wrap: false,
             visible_height: Cell::new(24),
             key_seq: boba_core::key_sequence::KeySequenceTracker::new(),
             key_bindings: ViewportKeyBindings::default(),
@@ -254,6 +257,12 @@ impl Viewport {
     /// Set the number of lines scrolled per mouse wheel tick.
     pub fn with_mouse_wheel_delta(mut self, delta: u16) -> Self {
         self.mouse_wheel_delta = delta;
+        self
+    }
+
+    /// Enable word wrapping for long lines.
+    pub fn with_word_wrap(mut self, enabled: bool) -> Self {
+        self.word_wrap = enabled;
         self
     }
 
@@ -482,7 +491,10 @@ impl Component for Viewport {
             Text::raw(&self.content)
         };
 
-        let paragraph = Paragraph::new(text).scroll((offset, self.h_offset));
+        let mut paragraph = Paragraph::new(text).scroll((offset, self.h_offset));
+        if self.word_wrap {
+            paragraph = paragraph.wrap(ratatui::widgets::Wrap { trim: false });
+        }
 
         frame.render_widget(paragraph, inner);
 
