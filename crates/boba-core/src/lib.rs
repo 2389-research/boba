@@ -74,6 +74,7 @@ pub mod input_layer;
 pub mod key_sequence;
 pub mod model;
 pub mod quit;
+pub mod post_render;
 pub mod runtime;
 pub mod subscription;
 pub mod subscriptions;
@@ -90,6 +91,7 @@ pub use quit::QuitConfirmation;
 pub use runtime::{
     log_to_file, OutputTarget, Program, ProgramError, ProgramHandle, ProgramOptions,
 };
+pub use post_render::PostRender;
 pub use subscription::{subscribe, Subscription, SubscriptionId, SubscriptionSource};
 pub use subscriptions::{terminal_events, After, Every};
 
