@@ -451,6 +451,16 @@ impl Component for TextInput {
                         self.editor.word_right();
                         Command::none()
                     }
+                    // Readline word movement: Alt+B (back) and Alt+F (forward)
+                    // On macOS, Option+Left/Right often arrive as Alt+b/Alt+f
+                    (KeyCode::Char('b'), m) if m.contains(KeyModifiers::ALT) => {
+                        self.editor.word_left();
+                        Command::none()
+                    }
+                    (KeyCode::Char('f'), m) if m.contains(KeyModifiers::ALT) => {
+                        self.editor.word_right();
+                        Command::none()
+                    }
                     (KeyCode::Home, _) => {
                         self.editor.move_home();
                         Command::none()
@@ -861,6 +871,22 @@ mod tests {
 
         // Alt+Right should move past "two" to end
         input.update(Message::KeyPress(key_alt(KeyCode::Right)));
+        assert_eq!(input.cursor_position(), 7);
+    }
+
+    #[test]
+    fn alt_b_f_readline_word_movement() {
+        let mut input = TextInput::new("");
+        input.focus();
+        input.set_value("one two");
+        assert_eq!(input.cursor_position(), 7);
+
+        // Alt+B should move to start of "two"
+        input.update(Message::KeyPress(key_alt(KeyCode::Char('b'))));
+        assert_eq!(input.cursor_position(), 4);
+
+        // Alt+F should move past "two" to end
+        input.update(Message::KeyPress(key_alt(KeyCode::Char('f'))));
         assert_eq!(input.cursor_position(), 7);
     }
 

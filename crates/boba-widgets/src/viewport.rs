@@ -158,6 +158,8 @@ pub struct Viewport {
     word_wrap: bool,
     /// Updated during each `view()` call via interior mutability.
     visible_height: Cell<u16>,
+    /// Updated during each `view()` call via interior mutability.
+    visible_width: Cell<u16>,
     key_seq: boba_core::key_sequence::KeySequenceTracker,
     key_bindings: ViewportKeyBindings,
 }
@@ -184,6 +186,7 @@ impl Viewport {
             mouse_wheel_delta: 3,
             word_wrap: false,
             visible_height: Cell::new(24),
+            visible_width: Cell::new(80),
             key_seq: boba_core::key_sequence::KeySequenceTracker::new(),
             key_bindings: ViewportKeyBindings::default(),
         }
@@ -210,13 +213,13 @@ impl Viewport {
 
     /// Set pre-styled content lines directly.
     ///
-    /// Clears the plain string content and resets scroll offsets. The styled
-    /// content takes precedence over `content` when rendering.
+    /// Clears the plain string content. Preserves the current scroll offset
+    /// so that callers can update content without disrupting the user's
+    /// scroll position (e.g. during streaming). Use `goto_top()` or
+    /// `goto_bottom()` to explicitly reposition after setting content.
     pub fn set_styled_content(&mut self, lines: Vec<Line<'static>>) {
         self.styled_content = Some(lines);
         self.content.clear();
-        self.offset = 0;
-        self.h_offset = 0;
     }
 
     /// Set content from a string containing ANSI escape sequences.
@@ -346,7 +349,9 @@ impl Viewport {
     // ---- Internal helpers ----
 
     fn total_lines(&self) -> u16 {
-        let count = if let Some(ref lines) = self.styled_content {
+        let count = if self.word_wrap {
+            self.wrapped_line_count()
+        } else if let Some(ref lines) = self.styled_content {
             lines.len()
         } else {
             self.content.lines().count()
@@ -355,6 +360,39 @@ impl Viewport {
             u16::MAX
         } else {
             count as u16
+        }
+    }
+
+    /// Count total visual lines after word wrapping.
+    fn wrapped_line_count(&self) -> usize {
+        let width = self.visible_width.get() as usize;
+        if width == 0 {
+            return 0;
+        }
+        if let Some(ref lines) = self.styled_content {
+            lines
+                .iter()
+                .map(|line| {
+                    let w = line.width();
+                    if w == 0 {
+                        1
+                    } else {
+                        (w + width - 1) / width
+                    }
+                })
+                .sum()
+        } else {
+            self.content
+                .lines()
+                .map(|line| {
+                    let w = line.len();
+                    if w == 0 {
+                        1
+                    } else {
+                        (w + width - 1) / width
+                    }
+                })
+                .sum()
         }
     }
 
@@ -367,6 +405,12 @@ impl Component for Viewport {
     type Message = Message;
 
     fn update(&mut self, msg: Message) -> Command<Message> {
+        // Normalize offset before any arithmetic — goto_bottom() uses u16::MAX
+        // which must be clamped to actual max before subtraction.
+        let max = self.max_offset(self.visible_height.get());
+        if self.offset > max {
+            self.offset = max;
+        }
         match msg {
             Message::KeyPress(key) if self.focus => {
                 // Check for gg sequence (vim go-to-top)
@@ -479,8 +523,9 @@ impl Component for Viewport {
             area
         };
 
-        // Update visible_height via interior mutability.
+        // Update visible dimensions via interior mutability.
         self.visible_height.set(inner.height);
+        self.visible_width.set(inner.width);
 
         let max = self.max_offset(inner.height);
         let offset = self.offset.min(max);
