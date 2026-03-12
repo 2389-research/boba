@@ -12,6 +12,8 @@ use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::runeutil;
 
 /// Messages for the viewport component.
@@ -314,8 +316,13 @@ impl Viewport {
     }
 
     /// Total number of lines in the content.
+    ///
+    /// When word wrapping is enabled, returns the number of visual lines
+    /// after wrapping rather than the raw line count.
     pub fn total_line_count(&self) -> usize {
-        if let Some(ref lines) = self.styled_content {
+        if self.word_wrap {
+            self.wrapped_line_count()
+        } else if let Some(ref lines) = self.styled_content {
             lines.len()
         } else {
             self.content.lines().count()
@@ -385,7 +392,7 @@ impl Viewport {
             self.content
                 .lines()
                 .map(|line| {
-                    let w = line.len();
+                    let w = UnicodeWidthStr::width(line);
                     if w == 0 {
                         1
                     } else {

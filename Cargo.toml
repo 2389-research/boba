@@ -25,3 +25,4 @@ thiserror = "2"
 libc = "0.2"
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 pulldown-cmark = "0.12"
+unicode-width = "0.2"
