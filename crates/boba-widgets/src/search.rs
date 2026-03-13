@@ -78,6 +78,16 @@ impl Default for SearchStyle {
     }
 }
 
+/// Strategy for matching search queries against content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MatchStrategy {
+    /// Case-insensitive substring match (default).
+    #[default]
+    CaseInsensitive,
+    /// Case-sensitive substring match.
+    CaseSensitive,
+}
+
 /// Inline search bar with match navigation.
 pub struct Search {
     active: bool,
@@ -86,6 +96,8 @@ pub struct Search {
     current_match: usize,
     style: SearchStyle,
     prompt_char: char,
+    content: Option<Vec<String>>,
+    match_strategy: MatchStrategy,
 }
 
 impl Default for Search {
@@ -104,6 +116,8 @@ impl Search {
             current_match: 0,
             style: SearchStyle::default(),
             prompt_char: '/',
+            content: None,
+            match_strategy: MatchStrategy::default(),
         }
     }
 
@@ -117,6 +131,19 @@ impl Search {
     pub fn with_prompt(mut self, ch: char) -> Self {
         self.prompt_char = ch;
         self
+    }
+
+    /// Set the match strategy (default: case-insensitive).
+    pub fn with_match_strategy(mut self, strategy: MatchStrategy) -> Self {
+        self.match_strategy = strategy;
+        self
+    }
+
+    /// Provide searchable content. When set, the search widget performs
+    /// matching internally on every query change instead of relying on
+    /// the parent to call `set_matches()`.
+    pub fn set_content(&mut self, content: Vec<String>) {
+        self.content = Some(content);
     }
 
     /// Whether the search bar is currently active/visible.
@@ -191,6 +218,38 @@ impl Search {
             }
         }
     }
+
+    /// Re-run matching against stored content using the current query.
+    fn update_matches_from_content(&mut self) {
+        if let Some(ref content) = self.content {
+            let query = self.editor.value();
+            if query.is_empty() {
+                self.matches.clear();
+                self.current_match = 0;
+                return;
+            }
+            let matches: Vec<usize> = match self.match_strategy {
+                MatchStrategy::CaseInsensitive => {
+                    let q = query.to_lowercase();
+                    content
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, s)| s.to_lowercase().contains(&q))
+                        .map(|(i, _)| i)
+                        .collect()
+                }
+                MatchStrategy::CaseSensitive => {
+                    content
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, s)| s.contains(&query))
+                        .map(|(i, _)| i)
+                        .collect()
+                }
+            };
+            self.set_matches(matches);
+        }
+    }
 }
 
 impl Component for Search {
@@ -245,6 +304,7 @@ impl Component for Search {
                 let new_value = self.editor.value();
 
                 if new_value != old_value {
+                    self.update_matches_from_content();
                     Command::message(Message::QueryChanged(new_value))
                 } else {
                     Command::none()
@@ -495,5 +555,83 @@ mod tests {
         let cmd = search.update(Message::KeyPress(key(KeyCode::Char('a'))));
         assert!(cmd.is_none());
         assert!(search.query().is_empty());
+    }
+
+    #[test]
+    fn set_content_performs_matching() {
+        let mut search = Search::new();
+        search.set_content(vec![
+            "Apple".to_string(),
+            "banana".to_string(),
+            "CHERRY".to_string(),
+            "apricot".to_string(),
+        ]);
+        search.activate();
+        search.update(Message::KeyPress(key(KeyCode::Char('a'))));
+
+        // Default strategy is CaseInsensitive: matches "Apple", "banana", "apricot"
+        assert_eq!(search.match_count(), 3);
+        assert_eq!(search.matches(), &[0, 1, 3]);
+    }
+
+    #[test]
+    fn set_content_case_sensitive() {
+        let mut search = Search::new()
+            .with_match_strategy(MatchStrategy::CaseSensitive);
+        search.set_content(vec![
+            "Apple".to_string(),
+            "banana".to_string(),
+            "apricot".to_string(),
+        ]);
+        search.activate();
+        search.update(Message::KeyPress(key(KeyCode::Char('a'))));
+
+        // CaseSensitive: "banana" and "apricot" contain lowercase 'a'
+        assert_eq!(search.match_count(), 2);
+        assert_eq!(search.matches(), &[1, 2]);
+    }
+
+    #[test]
+    fn set_content_updates_matches_on_query_change() {
+        let mut search = Search::new();
+        search.set_content(vec![
+            "hello".to_string(),
+            "help".to_string(),
+            "world".to_string(),
+        ]);
+        search.activate();
+        search.update(Message::KeyPress(key(KeyCode::Char('h'))));
+        assert_eq!(search.match_count(), 2); // hello, help
+
+        search.update(Message::KeyPress(key(KeyCode::Char('e'))));
+        assert_eq!(search.match_count(), 2); // hello, help (both contain "he")
+
+        search.update(Message::KeyPress(key(KeyCode::Char('l'))));
+        search.update(Message::KeyPress(key(KeyCode::Char('l'))));
+        assert_eq!(search.match_count(), 1); // only "hello"
+    }
+
+    #[test]
+    fn empty_query_clears_matches_with_content() {
+        let mut search = Search::new();
+        search.set_content(vec!["apple".to_string(), "banana".to_string()]);
+        search.activate();
+        search.update(Message::KeyPress(key(KeyCode::Char('a'))));
+        assert_eq!(search.match_count(), 2);
+
+        // Backspace to empty
+        search.update(Message::KeyPress(key(KeyCode::Backspace)));
+        assert_eq!(search.match_count(), 0);
+    }
+
+    #[test]
+    fn external_set_matches_still_works_without_content() {
+        // When no content is set, Search behaves exactly as before:
+        // parent calls set_matches() manually.
+        let mut search = Search::new();
+        search.activate();
+        search.update(Message::KeyPress(key(KeyCode::Char('x'))));
+        search.set_matches(vec![0, 5, 10]);
+        assert_eq!(search.match_count(), 3);
     }
 }
