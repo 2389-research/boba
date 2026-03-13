@@ -1,6 +1,6 @@
 //! # Autocomplete Example
 //!
-//! Demonstrates composing TextInput + Dropdown for autocomplete behavior.
+//! Demonstrates composing TextArea + Dropdown for autocomplete behavior.
 //! This shows the recommended pattern instead of using a dedicated
 //! autocomplete widget — compose building blocks for your specific needs.
 //!
@@ -14,7 +14,7 @@ use boba::ratatui::widgets::Paragraph;
 use boba::ratatui::Frame;
 use boba::widgets::chrome::focus_block;
 use boba::widgets::dropdown::{self, Dropdown};
-use boba::widgets::text_input::{self, TextInput};
+use boba::widgets::text_area::{self, TextArea};
 use boba::{terminal_events, Command, Component, Model, Subscription, TerminalEvent};
 
 const FRUITS: &[&str] = &[
@@ -51,7 +51,7 @@ const FRUITS: &[&str] = &[
 ];
 
 struct AutocompleteApp {
-    input: TextInput,
+    input: TextArea,
     dropdown: Dropdown,
     selected_fruit: Option<String>,
     dropdown_open: bool,
@@ -59,7 +59,7 @@ struct AutocompleteApp {
 
 #[derive(Debug)]
 enum Msg {
-    Input(text_input::Message),
+    Input(text_area::Message),
     Drop(dropdown::Message),
     Quit,
 }
@@ -69,7 +69,9 @@ impl Model for AutocompleteApp {
     type Flags = ();
 
     fn init(_: ()) -> (Self, Command<Msg>) {
-        let mut input = TextInput::new("Search fruits...");
+        let mut input = TextArea::new()
+            .with_single_line(true)
+            .with_placeholder("Search fruits...");
         input.focus();
         let dropdown = Dropdown::new().with_max_visible(8);
         (
@@ -85,10 +87,10 @@ impl Model for AutocompleteApp {
 
     fn update(&mut self, msg: Msg) -> Command<Msg> {
         match msg {
-            Msg::Input(text_input::Message::Changed(ref value)) => {
+            Msg::Input(text_area::Message::Changed(ref value)) => {
                 let cmd = self
                     .input
-                    .update(text_input::Message::Changed(value.clone()))
+                    .update(text_area::Message::Changed(value.clone()))
                     .map(Msg::Input);
                 // Filter fruits based on input
                 let filtered: Vec<String> = FRUITS
@@ -105,7 +107,7 @@ impl Model for AutocompleteApp {
                 }
                 cmd
             }
-            Msg::Input(text_input::Message::Submit(_)) => {
+            Msg::Input(text_area::Message::Submit(_)) => {
                 // Accept from dropdown if open
                 if self.dropdown_open {
                     if let Some(val) = self.dropdown.selected_value().map(str::to_owned) {
@@ -204,8 +206,8 @@ impl Model for AutocompleteApp {
                 (KeyCode::Down, _) if dropdown_open => {
                     Some(Msg::Drop(dropdown::Message::KeyPress(key)))
                 }
-                (KeyCode::Enter, _) => Some(Msg::Input(text_input::Message::KeyPress(key))),
-                _ => Some(Msg::Input(text_input::Message::KeyPress(key))),
+                (KeyCode::Enter, _) => Some(Msg::Input(text_area::Message::KeyPress(key))),
+                _ => Some(Msg::Input(text_area::Message::KeyPress(key))),
             },
             _ => None,
         })]

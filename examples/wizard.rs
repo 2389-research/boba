@@ -13,7 +13,7 @@ use boba::ratatui::widgets::{Clear, Paragraph};
 use boba::ratatui::Frame;
 use boba::widgets::chrome::focus_block;
 use boba::widgets::progress::{self, Progress};
-use boba::widgets::text_input::{self, TextInput};
+use boba::widgets::text_area::{self, TextArea};
 use boba::{terminal_events, Command, Component, Model, Subscription, TerminalEvent};
 
 // ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ impl Step {
 
 struct WizardApp {
     step: Step,
-    name_input: TextInput,
+    name_input: TextArea,
     progress: Progress,
 }
 
@@ -58,7 +58,7 @@ enum Msg {
     PrevStep,
     Cancel,
     Quit,
-    NameInput(text_input::Message),
+    NameInput(text_area::Message),
     Progress(progress::Message),
 }
 
@@ -146,7 +146,9 @@ impl Model for WizardApp {
         let progress = Progress::new("wizard-progress")
             .with_label("Progress")
             .with_fill_color(Color::Cyan);
-        let name_input = TextInput::new("Enter your name...");
+        let name_input = TextArea::new()
+            .with_single_line(true)
+            .with_placeholder("Enter your name...");
 
         (
             WizardApp {
@@ -272,7 +274,7 @@ impl Model for WizardApp {
                     Line::from("Welcome to the setup wizard!"),
                     Line::from(""),
                     Line::from("This example shows how to compose a multi-step"),
-                    Line::from("wizard from Progress + TextInput + state machine."),
+                    Line::from("wizard from Progress + TextArea + state machine."),
                     Line::from(""),
                     Line::from(Span::styled(
                         "Press Enter to begin.",
@@ -379,8 +381,8 @@ impl Model for WizardApp {
                 }
                 // Esc on welcome = cancel
                 (KeyCode::Esc, _) if step == Step::Welcome => Some(Msg::Cancel),
-                // Forward everything else to TextInput on the Name step
-                _ if step == Step::Name => Some(Msg::NameInput(text_input::Message::KeyPress(key))),
+                // Forward everything else to TextArea on the Name step
+                _ if step == Step::Name => Some(Msg::NameInput(text_area::Message::KeyPress(key))),
                 _ => None,
             },
             _ => None,

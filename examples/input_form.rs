@@ -1,6 +1,6 @@
 //! # Input Form Example
 //!
-//! Demonstrates component composition with two `TextInput` widgets:
+//! Demonstrates component composition with two `TextArea` widgets:
 //! - Wrapping child component messages in a parent message enum
 //! - Using `Command::map` to lift child commands into the parent message space
 //! - Focus management with `FocusGroup`
@@ -16,13 +16,13 @@ use boba::ratatui::widgets::{Block, Borders, Paragraph};
 use boba::ratatui::Frame;
 use boba::widgets::chrome::focus_block;
 use boba::widgets::focus::FocusGroup;
-use boba::widgets::text_input::{self, EchoMode, TextInput};
+use boba::widgets::text_area::{self, EchoMode, TextArea};
 use boba::{terminal_events, Command, Component, Model, Subscription, TerminalEvent};
 
 /// A form with two text inputs demonstrating component composition.
 struct FormApp {
-    username: TextInput,
-    password: TextInput,
+    username: TextArea,
+    password: TextArea,
     focus: FocusGroup<3>,
     submitted: Option<String>,
 }
@@ -31,8 +31,8 @@ struct FormApp {
 // This pattern lets the parent route messages to the correct child.
 #[derive(Debug)]
 enum Msg {
-    Username(text_input::Message),
-    Password(text_input::Message),
+    Username(text_area::Message),
+    Password(text_area::Message),
     FocusNext,
     FocusPrev,
     Submit,
@@ -44,9 +44,14 @@ impl Model for FormApp {
     type Flags = ();
 
     fn init(_: ()) -> (Self, Command<Msg>) {
-        let mut username = TextInput::new("Enter username");
+        let mut username = TextArea::new()
+            .with_single_line(true)
+            .with_placeholder("Enter username");
         username.focus();
-        let password = TextInput::new("Enter password").with_echo_mode(EchoMode::Password('*'));
+        let password = TextArea::new()
+            .with_single_line(true)
+            .with_placeholder("Enter password")
+            .with_echo_mode(EchoMode::Password('*'));
         (
             FormApp {
                 username,
@@ -189,7 +194,7 @@ impl Model for FormApp {
     }
 
     // Focus-aware routing: the subscription captures which child is focused
-    // and routes unhandled key events to the appropriate TextInput component.
+    // and routes unhandled key events to the appropriate TextArea component.
     fn subscriptions(&self) -> Vec<Subscription<Msg>> {
         let focused = self.focus.focused();
         vec![terminal_events(move |ev| match ev {
@@ -200,9 +205,9 @@ impl Model for FormApp {
                 (KeyCode::BackTab, _) => Some(Msg::FocusPrev),
                 (KeyCode::Enter, _) => Some(Msg::Submit),
                 _ => {
-                    // Route unhandled keys to whichever TextInput currently
+                    // Route unhandled keys to whichever TextArea currently
                     // has focus, wrapping the child message in the parent enum.
-                    let key_msg = text_input::Message::KeyPress(key);
+                    let key_msg = text_area::Message::KeyPress(key);
                     if focused == 0 {
                         Some(Msg::Username(key_msg))
                     } else {
