@@ -1,3 +1,6 @@
+// ABOUTME: Scrollable content viewer with plain text, styled lines, and ANSI support.
+// ABOUTME: Features horizontal/vertical scroll, word wrap, mouse wheel, padding, and keyboard navigation.
+
 //! Scrollable content area with support for plain text, styled lines,
 //! ANSI escape sequences, mouse wheel scrolling, and horizontal scroll.
 
@@ -7,10 +10,9 @@ use boba_core::command::Command;
 use boba_core::component::Component;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
-use ratatui::widgets::Padding;
 use ratatui::style::Style;
 use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{Block, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
 
 use unicode_width::UnicodeWidthStr;
@@ -164,7 +166,7 @@ pub struct Viewport {
     /// Updated during each `view()` call via interior mutability.
     visible_width: Cell<u16>,
     /// Inner padding between the border (or area edge) and content.
-    pub padding: Padding,
+    padding: Padding,
     key_seq: boba_core::key_sequence::KeySequenceTracker,
     key_bindings: ViewportKeyBindings,
 }
@@ -264,6 +266,11 @@ impl Viewport {
     pub fn with_padding(mut self, top: u16, right: u16, bottom: u16, left: u16) -> Self {
         self.padding = Padding::new(left, right, top, bottom);
         self
+    }
+
+    /// Get the current padding configuration.
+    pub fn padding(&self) -> &Padding {
+        &self.padding
     }
 
     /// Enable or disable mouse wheel scrolling.
@@ -597,10 +604,10 @@ mod tests {
         // After setting padding, total_line_count is unchanged (content is the same)
         assert_eq!(vp.total_line_count(), 10);
 
-        // The padding field should be set
-        assert_eq!(vp.padding.top, 1);
-        assert_eq!(vp.padding.right, 1);
-        assert_eq!(vp.padding.bottom, 1);
-        assert_eq!(vp.padding.left, 1);
+        // The padding should be set
+        assert_eq!(vp.padding().top, 1);
+        assert_eq!(vp.padding().right, 1);
+        assert_eq!(vp.padding().bottom, 1);
+        assert_eq!(vp.padding().left, 1);
     }
 }
