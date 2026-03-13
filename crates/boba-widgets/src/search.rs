@@ -1,3 +1,6 @@
+// ABOUTME: Search overlay component that composes a single-line TextArea with match navigation.
+// ABOUTME: Provides inline search bar with Ctrl+N/Ctrl+P navigation between matches.
+
 //! Search overlay component with match navigation.
 //!
 //! Provides an inline search bar that sits at the bottom of a content area,

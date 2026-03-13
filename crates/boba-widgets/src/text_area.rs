@@ -1,3 +1,6 @@
+// ABOUTME: Unified text editor widget supporting both single-line and multi-line modes.
+// ABOUTME: Features: line numbers, selection, undo/redo, submit bindings, autocomplete, validation, echo modes.
+
 //! Multi-line text editor component with line numbers, text selection,
 //! undo/redo, word case operations, clipboard integration, and soft wrapping.
 
