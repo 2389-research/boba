@@ -83,6 +83,7 @@ pub struct TextArea {
     submit_binding: SubmitBinding,
     /// Horizontal scroll offset for single-line mode.
     h_offset: usize,
+    placeholder: String,
 }
 
 /// Style configuration for the text area.
@@ -96,6 +97,10 @@ pub struct TextAreaStyle {
     pub line_number: Style,
     /// Style applied to selected (highlighted) text.
     pub selection: Style,
+    /// Style applied to the per-line prompt string.
+    pub prompt: Style,
+    /// Style applied to placeholder text shown when empty and unfocused.
+    pub placeholder: Style,
 }
 
 impl Default for TextAreaStyle {
@@ -105,6 +110,8 @@ impl Default for TextAreaStyle {
             cursor: Style::default().add_modifier(Modifier::REVERSED),
             line_number: Style::default().fg(Color::DarkGray),
             selection: Style::default().bg(Color::DarkGray),
+            prompt: Style::default().fg(Color::Cyan),
+            placeholder: Style::default().fg(Color::DarkGray),
         }
     }
 }
@@ -131,6 +138,7 @@ impl TextArea {
             single_line: false,
             submit_binding: SubmitBinding::None,
             h_offset: 0,
+            placeholder: String::new(),
         }
     }
 
@@ -174,6 +182,20 @@ impl TextArea {
     /// Set a per-line prompt string rendered before each line.
     pub fn with_line_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.line_prompt = Some(prompt.into());
+        self
+    }
+
+    /// Set the prompt string displayed before each line of content.
+    ///
+    /// This is an alias for `with_line_prompt` that provides a shorter name.
+    pub fn with_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.line_prompt = Some(prompt.into());
+        self
+    }
+
+    /// Set placeholder text displayed when the editor is empty and unfocused.
+    pub fn with_placeholder(mut self, text: impl Into<String>) -> Self {
+        self.placeholder = text.into();
         self
     }
 
@@ -705,7 +727,16 @@ impl TextArea {
         let mut spans = Vec::new();
 
         if let Some(ref prompt) = self.line_prompt {
-            spans.push(Span::styled(prompt.clone(), self.style.text));
+            spans.push(Span::styled(prompt.clone(), self.style.prompt));
+        }
+
+        // Show placeholder text when empty and unfocused
+        let is_empty = line_len == 0;
+        if is_empty && !self.focus && !self.placeholder.is_empty() {
+            spans.push(Span::styled(self.placeholder.clone(), self.style.placeholder));
+            let paragraph = Paragraph::new(Line::from(spans));
+            frame.render_widget(paragraph, inner);
+            return;
         }
 
         // Render the visible slice with cursor highlighting
@@ -1157,6 +1188,18 @@ impl Component for TextArea {
             return;
         }
 
+        // Show placeholder text when empty and unfocused
+        let content_empty = self.lines.len() == 1 && self.lines[0].is_empty();
+        if content_empty && !self.focus && !self.placeholder.is_empty() {
+            let placeholder_line = Line::from(Span::styled(
+                self.placeholder.clone(),
+                self.style.placeholder,
+            ));
+            let paragraph = Paragraph::new(placeholder_line);
+            frame.render_widget(paragraph, inner);
+            return;
+        }
+
         let visible_height = inner.height as usize;
 
         // Adjust scroll to keep cursor visible
@@ -1195,7 +1238,7 @@ impl Component for TextArea {
                 }
 
                 if let Some(ref prompt) = self.line_prompt {
-                    spans.push(Span::styled(prompt.clone(), self.style.text));
+                    spans.push(Span::styled(prompt.clone(), self.style.prompt));
                 }
 
                 if has_sel {
@@ -1799,5 +1842,17 @@ mod tests {
         assert_eq!(ta.cursor_col(), 0);
         ta.update_h_offset(10);
         assert_eq!(ta.h_offset(), 0, "h_offset should track back to 0 when cursor is at start");
+    }
+
+    #[test]
+    fn placeholder_builder() {
+        let ta = TextArea::new().with_placeholder("Type here...");
+        assert_eq!(ta.value(), "");
+    }
+
+    #[test]
+    fn prompt_builder() {
+        let ta = TextArea::new().with_prompt("> ");
+        assert_eq!(ta.value(), "");
     }
 }
