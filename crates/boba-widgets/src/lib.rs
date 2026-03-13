@@ -39,7 +39,7 @@
 //!
 //! | Module | Description |
 //! |--------|-------------|
-//! | [`focus`] | [`FocusGroup`](focus::FocusGroup) for managing focus across multiple components |
+//! | [`focus`] | [`FocusGroup<N>`](focus::FocusGroup) — cycle keyboard focus across N components with Tab/Shift+Tab (see `examples/input_form.rs`) |
 //! | [`key`] | Key-binding helpers and constants |
 //! | [`overlay`] | Overlay positioning and rendering utilities |
 //! | [`runeutil`] | Unicode-aware string width and truncation utilities |
