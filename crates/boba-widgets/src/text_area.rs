@@ -510,6 +510,60 @@ impl TextArea {
         self.cursor_col
     }
 
+    /// Whether the content is empty.
+    pub fn is_empty(&self) -> bool {
+        self.lines.len() == 1 && self.lines[0].is_empty()
+    }
+
+    /// Total character count including newlines.
+    pub fn len(&self) -> usize {
+        let newlines = self.lines.len().saturating_sub(1);
+        let chars: usize = self.lines.iter().map(|l| l.len()).sum();
+        chars + newlines
+    }
+
+    /// Flat character index of the cursor position.
+    ///
+    /// Counts characters from the start of content, including newlines.
+    pub fn cursor_position(&self) -> usize {
+        let mut pos = 0;
+        for row in 0..self.cursor_row {
+            pos += self.lines[row].len() + 1; // +1 for newline
+        }
+        pos + self.cursor_col
+    }
+
+    /// Set cursor by flat character index.
+    ///
+    /// Converts a flat index to (row, col) position. Clamps to the end
+    /// of content if the index is past the last character.
+    pub fn set_cursor(&mut self, pos: usize) {
+        let mut remaining = pos;
+        for (row, line) in self.lines.iter().enumerate() {
+            if remaining <= line.len() {
+                self.cursor_row = row;
+                self.cursor_col = remaining;
+                return;
+            }
+            remaining = remaining.saturating_sub(line.len() + 1);
+        }
+        // Past end — clamp to last position
+        self.cursor_row = self.lines.len() - 1;
+        self.cursor_col = self.lines[self.cursor_row].len();
+    }
+
+    /// Reset content, cursor, selection, and undo/redo stacks.
+    pub fn reset(&mut self) {
+        self.lines = vec![Vec::new()];
+        self.cursor_row = 0;
+        self.cursor_col = 0;
+        self.scroll_offset = 0;
+        self.h_offset = 0;
+        self.selection_start = None;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+    }
+
     /// Return the current horizontal scroll offset (single-line mode).
     pub fn h_offset(&self) -> usize {
         self.h_offset
@@ -2324,5 +2378,47 @@ mod tests {
             send_key(&mut ta, KeyCode::Down, KeyModifiers::NONE);
         }
         assert_eq!(ta.cursor_row(), 4);
+    }
+
+    #[test]
+    fn is_empty_and_len() {
+        let ta = TextArea::new();
+        assert!(ta.is_empty());
+        assert_eq!(ta.len(), 0);
+
+        let ta = TextArea::new().with_content("hello");
+        assert!(!ta.is_empty());
+        assert_eq!(ta.len(), 5);
+
+        let ta = TextArea::new().with_content("ab\ncd");
+        assert_eq!(ta.len(), 5); // 2 + 1 (newline) + 2
+    }
+
+    #[test]
+    fn cursor_position_flat_index() {
+        let mut ta = TextArea::new().with_content("ab\ncd");
+        ta.focus();
+        send_key(&mut ta, KeyCode::Down, KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Right, KeyModifiers::NONE);
+        // Row 1, col 1 = flat index 4 (a=0, b=1, \n=2, c=3, d=4... col 1 = 4)
+        assert_eq!(ta.cursor_position(), 4);
+    }
+
+    #[test]
+    fn set_cursor_flat_index() {
+        let mut ta = TextArea::new().with_content("ab\ncd");
+        ta.set_cursor(4); // should be row 1, col 1 ("d")
+        assert_eq!(ta.cursor_row(), 1);
+        assert_eq!(ta.cursor_col(), 1);
+    }
+
+    #[test]
+    fn reset_clears_everything() {
+        let mut ta = TextArea::new().with_content("hello");
+        ta.focus();
+        ta.reset();
+        assert!(ta.is_empty());
+        assert_eq!(ta.cursor_row(), 0);
+        assert_eq!(ta.cursor_col(), 0);
     }
 }
