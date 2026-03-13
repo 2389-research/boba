@@ -27,7 +27,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::text_edit::TextEditState;
+use crate::text_area;
+use crate::text_area::TextArea;
 
 /// Messages emitted by the search component.
 #[derive(Debug, Clone)]
@@ -77,7 +78,7 @@ impl Default for SearchStyle {
 /// Inline search bar with match navigation.
 pub struct Search {
     active: bool,
-    editor: TextEditState,
+    editor: TextArea,
     matches: Vec<usize>,
     current_match: usize,
     style: SearchStyle,
@@ -95,7 +96,7 @@ impl Search {
     pub fn new() -> Self {
         Self {
             active: false,
-            editor: TextEditState::new(),
+            editor: TextArea::new().with_single_line(true),
             matches: Vec::new(),
             current_match: 0,
             style: SearchStyle::default(),
@@ -124,6 +125,7 @@ impl Search {
     pub fn activate(&mut self) {
         self.active = true;
         self.editor.reset();
+        self.editor.focus();
         self.matches.clear();
         self.current_match = 0;
     }
@@ -198,56 +200,51 @@ impl Component for Search {
                     return Command::none();
                 }
 
+                // Keys that Search intercepts before forwarding to the editor.
                 match (key.code, key.modifiers) {
                     (KeyCode::Esc, _) => {
                         self.deactivate();
-                        Command::message(Message::Dismissed)
+                        return Command::message(Message::Dismissed);
                     }
                     (KeyCode::Enter, _) => {
-                        if let Some(idx) = self.current_match_value() {
+                        return if let Some(idx) = self.current_match_value() {
                             Command::message(Message::JumpTo(idx))
                         } else {
                             Command::none()
-                        }
+                        };
                     }
                     (KeyCode::Char('n'), KeyModifiers::CONTROL) if !self.matches.is_empty() => {
                         self.next_match();
-                        if let Some(idx) = self.current_match_value() {
+                        return if let Some(idx) = self.current_match_value() {
                             Command::message(Message::JumpTo(idx))
                         } else {
                             Command::none()
-                        }
+                        };
                     }
                     (KeyCode::Char('p'), KeyModifiers::CONTROL) if !self.matches.is_empty() => {
                         self.prev_match();
-                        if let Some(idx) = self.current_match_value() {
+                        return if let Some(idx) = self.current_match_value() {
                             Command::message(Message::JumpTo(idx))
                         } else {
                             Command::none()
-                        }
+                        };
                     }
-                    (KeyCode::Backspace, _) => {
-                        if self.editor.is_empty() {
-                            self.deactivate();
-                            Command::message(Message::Dismissed)
-                        } else {
-                            self.editor.delete_back();
-                            Command::message(Message::QueryChanged(self.editor.value()))
-                        }
+                    (KeyCode::Backspace, _) if self.editor.is_empty() => {
+                        self.deactivate();
+                        return Command::message(Message::Dismissed);
                     }
-                    (KeyCode::Left, _) => {
-                        self.editor.move_left();
-                        Command::none()
-                    }
-                    (KeyCode::Right, _) => {
-                        self.editor.move_right();
-                        Command::none()
-                    }
-                    (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
-                        self.editor.insert_char(c);
-                        Command::message(Message::QueryChanged(self.editor.value()))
-                    }
-                    _ => Command::none(),
+                    _ => {}
+                }
+
+                // Forward all other keys to the TextArea editor.
+                let old_value = self.editor.value();
+                self.editor.update(text_area::Message::KeyPress(key));
+                let new_value = self.editor.value();
+
+                if new_value != old_value {
+                    Command::message(Message::QueryChanged(new_value))
+                } else {
+                    Command::none()
                 }
             }
             Message::Activated => {
@@ -272,8 +269,8 @@ impl Component for Search {
         ));
 
         // Query text with cursor
-        let chars = self.editor.chars();
-        let cursor = self.editor.cursor();
+        let chars: Vec<char> = self.editor.value().chars().collect();
+        let cursor = self.editor.cursor_col();
         if chars.is_empty() {
             spans.push(Span::styled(" ", self.style.cursor));
         } else {
@@ -475,13 +472,13 @@ mod tests {
         search.update(Message::KeyPress(key(KeyCode::Char('f'))));
         search.update(Message::KeyPress(key(KeyCode::Char('é'))));
         assert_eq!(search.query(), "café");
-        assert_eq!(search.editor.cursor(), 4); // 4 chars
+        assert_eq!(search.editor.cursor_col(), 4); // 4 chars
 
         // Move left, then right
         search.update(Message::KeyPress(key(KeyCode::Left)));
-        assert_eq!(search.editor.cursor(), 3);
+        assert_eq!(search.editor.cursor_col(), 3);
         search.update(Message::KeyPress(key(KeyCode::Right)));
-        assert_eq!(search.editor.cursor(), 4);
+        assert_eq!(search.editor.cursor_col(), 4);
 
         // Backspace the 'é'
         search.update(Message::KeyPress(key(KeyCode::Backspace)));
