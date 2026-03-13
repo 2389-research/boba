@@ -99,6 +99,10 @@ pub struct TextArea {
     h_offset: usize,
     placeholder: String,
     echo_mode: EchoMode,
+    suggestions: Vec<String>,
+    filtered_suggestions: Vec<String>,
+    show_suggestions: bool,
+    suggestion_index: usize,
 }
 
 /// Style configuration for the text area.
@@ -116,6 +120,8 @@ pub struct TextAreaStyle {
     pub prompt: Style,
     /// Style applied to placeholder text shown when empty and unfocused.
     pub placeholder: Style,
+    /// Style applied to ghost text from autocomplete suggestions.
+    pub suggestion: Style,
 }
 
 impl Default for TextAreaStyle {
@@ -127,6 +133,7 @@ impl Default for TextAreaStyle {
             selection: Style::default().bg(Color::DarkGray),
             prompt: Style::default().fg(Color::Cyan),
             placeholder: Style::default().fg(Color::DarkGray),
+            suggestion: Style::default().fg(Color::DarkGray),
         }
     }
 }
@@ -155,6 +162,10 @@ impl TextArea {
             h_offset: 0,
             placeholder: String::new(),
             echo_mode: EchoMode::Normal,
+            suggestions: Vec::new(),
+            filtered_suggestions: Vec::new(),
+            show_suggestions: true,
+            suggestion_index: 0,
         }
     }
 
@@ -268,6 +279,81 @@ impl TextArea {
     /// Return the current echo mode.
     pub fn echo_mode(&self) -> &EchoMode {
         &self.echo_mode
+    }
+
+    /// Set the list of autocomplete suggestions.
+    ///
+    /// Suggestions are only active in single-line mode. After setting,
+    /// the list is immediately filtered against the current input value.
+    pub fn set_suggestions(&mut self, suggestions: Vec<String>) {
+        self.suggestions = suggestions;
+        self.filter_suggestions();
+    }
+
+    /// Builder method to set autocomplete suggestions.
+    ///
+    /// Suggestions are only active in single-line mode.
+    pub fn with_suggestions(mut self, suggestions: Vec<String>) -> Self {
+        self.suggestions = suggestions;
+        self.filter_suggestions();
+        self
+    }
+
+    /// Return the currently highlighted suggestion, if any.
+    ///
+    /// Returns `None` when not in single-line mode or when suggestions
+    /// are hidden.
+    pub fn current_suggestion(&self) -> Option<&str> {
+        if !self.single_line || !self.show_suggestions {
+            return None;
+        }
+        self.filtered_suggestions
+            .get(self.suggestion_index)
+            .map(|s| s.as_str())
+    }
+
+    /// Return the filtered suggestions that match the current input.
+    pub fn available_suggestions(&self) -> &[String] {
+        &self.filtered_suggestions
+    }
+
+    /// Show or hide autocomplete suggestions.
+    pub fn show_suggestions(&mut self, show: bool) {
+        self.show_suggestions = show;
+    }
+
+    /// Filter the suggestion list against the current input value.
+    ///
+    /// Keeps only suggestions that start with the current value
+    /// (case-insensitive) and are not an exact match. Resets the
+    /// suggestion index to 0.
+    fn filter_suggestions(&mut self) {
+        let val = self.value().to_lowercase();
+        self.filtered_suggestions = self
+            .suggestions
+            .iter()
+            .filter(|s| {
+                let sl = s.to_lowercase();
+                sl.starts_with(&val) && sl != val
+            })
+            .cloned()
+            .collect();
+        self.suggestion_index = 0;
+    }
+
+    /// Accept the current suggestion, replacing the input content.
+    ///
+    /// Returns true if a suggestion was accepted.
+    fn accept_suggestion(&mut self) -> bool {
+        if let Some(suggestion) = self.current_suggestion().map(|s| s.to_owned()) {
+            self.lines = vec![suggestion.chars().collect()];
+            self.cursor_col = self.lines[0].len();
+            self.cursor_row = 0;
+            self.filter_suggestions();
+            true
+        } else {
+            false
+        }
     }
 
     /// Push a value into the input history.
@@ -789,6 +875,22 @@ impl TextArea {
             return;
         }
 
+        // Compute ghost text from the current suggestion (remaining part only).
+        let ghost_text: Option<String> = if self.show_suggestions {
+            if let Some(suggestion) = self.current_suggestion() {
+                let current_val = self.value();
+                if suggestion.len() > current_val.len() {
+                    Some(suggestion[current_val.len()..].to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Render the visible slice with cursor highlighting
         if self.focus {
             let cursor_in_visible = self.cursor_col.saturating_sub(h_off);
@@ -813,6 +915,12 @@ impl TextArea {
             }
             if !after.is_empty() {
                 spans.push(Span::styled(after, self.style.text));
+            }
+            // Show ghost text after the cursor when cursor is at end of content.
+            if let Some(ref ghost) = ghost_text {
+                if self.cursor_col >= line_len {
+                    spans.push(Span::styled(ghost.clone(), self.style.suggestion));
+                }
             }
         } else {
             let text: String = visible.iter().collect();
@@ -852,6 +960,9 @@ impl Component for TextArea {
                 } else {
                     self.insert_string(&text);
                 }
+                if self.single_line {
+                    self.filter_suggestions();
+                }
                 Command::message(Message::Changed(self.value()))
             }
             Message::KeyPress(key) if self.focus => {
@@ -868,6 +979,9 @@ impl Component for TextArea {
                             self.cursor_row = row;
                             self.cursor_col = col;
                             self.selection_start = None;
+                            if self.single_line {
+                                self.filter_suggestions();
+                            }
                             Command::message(Message::Changed(self.value()))
                         } else {
                             Command::none()
@@ -884,6 +998,9 @@ impl Component for TextArea {
                             self.cursor_row = row;
                             self.cursor_col = col;
                             self.selection_start = None;
+                            if self.single_line {
+                                self.filter_suggestions();
+                            }
                             Command::message(Message::Changed(self.value()))
                         } else {
                             Command::none()
@@ -902,6 +1019,9 @@ impl Component for TextArea {
                         if let Some(text) = self.selected_text() {
                             self.push_undo();
                             self.delete_selection();
+                            if self.single_line {
+                                self.filter_suggestions();
+                            }
                             Command::batch([
                                 Command::message(Message::Cut(text)),
                                 Command::message(Message::Changed(self.value())),
@@ -920,6 +1040,9 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.kill_to_end_of_line();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
                         Command::message(Message::Changed(self.value()))
                     }
                     // Ctrl+U: kill to start of line
@@ -927,6 +1050,9 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.kill_to_start_of_line();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
                         Command::message(Message::Changed(self.value()))
                     }
                     // Ctrl+W / Alt+Backspace: delete word backward
@@ -934,12 +1060,18 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.delete_word_backward();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
                         Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Backspace, KeyModifiers::ALT) => {
                         self.push_undo();
                         self.clear_selection();
                         self.delete_word_backward();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
                         Command::message(Message::Changed(self.value()))
                     }
                     // Alt+D: delete word forward
@@ -947,6 +1079,9 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.delete_word_forward();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
                         Command::message(Message::Changed(self.value()))
                     }
                     // Alt+U: uppercase word at cursor
@@ -954,6 +1089,9 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.uppercase_word();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
                         Command::message(Message::Changed(self.value()))
                     }
                     // Alt+L: lowercase word at cursor
@@ -961,6 +1099,9 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.lowercase_word();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
                         Command::message(Message::Changed(self.value()))
                     }
                     // Alt+C: capitalize word at cursor
@@ -968,6 +1109,9 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.capitalize_word();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
                         Command::message(Message::Changed(self.value()))
                     }
                     // Ctrl+Delete: delete word forward
@@ -975,6 +1119,9 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.delete_word_forward();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
                         Command::message(Message::Changed(self.value()))
                     }
                     // Ctrl+Left / Alt+Left: move to previous word boundary
@@ -1042,20 +1189,28 @@ impl Component for TextArea {
                         self.cursor_col = self.current_line_len();
                         Command::none()
                     }
-                    // Tab: insert 4 spaces
+                    // Tab: accept suggestion in single-line mode, otherwise insert 4 spaces
                     (KeyCode::Tab, _) => {
-                        self.push_undo();
-                        self.delete_selection();
-                        for _ in 0..4 {
-                            if let Some(limit) = self.char_limit {
-                                if self.total_chars() >= limit {
-                                    break;
-                                }
+                        if self.single_line {
+                            if self.accept_suggestion() {
+                                Command::message(Message::Changed(self.value()))
+                            } else {
+                                Command::none()
                             }
-                            self.lines[self.cursor_row].insert(self.cursor_col, ' ');
-                            self.cursor_col += 1;
+                        } else {
+                            self.push_undo();
+                            self.delete_selection();
+                            for _ in 0..4 {
+                                if let Some(limit) = self.char_limit {
+                                    if self.total_chars() >= limit {
+                                        break;
+                                    }
+                                }
+                                self.lines[self.cursor_row].insert(self.cursor_col, ' ');
+                                self.cursor_col += 1;
+                            }
+                            Command::message(Message::Changed(self.value()))
                         }
-                        Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                         self.push_undo();
@@ -1067,6 +1222,9 @@ impl Component for TextArea {
                         }
                         self.lines[self.cursor_row].insert(self.cursor_col, c);
                         self.cursor_col += 1;
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
                         Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Enter, m) => {
@@ -1097,7 +1255,6 @@ impl Component for TextArea {
                         if self.has_selection() {
                             self.push_undo();
                             self.delete_selection();
-                            Command::message(Message::Changed(self.value()))
                         } else {
                             self.clear_selection();
                             if self.cursor_col > 0 {
@@ -1113,14 +1270,16 @@ impl Component for TextArea {
                             } else {
                                 return Command::none();
                             }
-                            Command::message(Message::Changed(self.value()))
                         }
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Delete, _) => {
                         if self.has_selection() {
                             self.push_undo();
                             self.delete_selection();
-                            Command::message(Message::Changed(self.value()))
                         } else {
                             self.clear_selection();
                             if self.cursor_col < self.current_line_len() {
@@ -1133,8 +1292,11 @@ impl Component for TextArea {
                             } else {
                                 return Command::none();
                             }
-                            Command::message(Message::Changed(self.value()))
                         }
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Left, _) => {
                         self.clear_selection();
@@ -1150,6 +1312,11 @@ impl Component for TextArea {
                         self.clear_selection();
                         if self.cursor_col < self.current_line_len() {
                             self.cursor_col += 1;
+                        } else if self.single_line
+                            && self.cursor_col >= self.current_line_len()
+                            && self.accept_suggestion()
+                        {
+                            return Command::message(Message::Changed(self.value()));
                         } else if self.cursor_row < self.lines.len() - 1 {
                             self.cursor_row += 1;
                             self.cursor_col = 0;
@@ -1927,5 +2094,63 @@ mod tests {
             .with_content("secret");
         assert_eq!(ta.value(), "secret");
         assert!(matches!(ta.echo_mode(), EchoMode::Hidden));
+    }
+
+    #[test]
+    fn suggestions_filter_as_user_types() {
+        let mut ta = TextArea::new()
+            .with_single_line(true)
+            .with_suggestions(vec!["apple".into(), "banana".into(), "apricot".into()]);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        let avail = ta.available_suggestions();
+        assert_eq!(avail.len(), 2);
+        assert!(avail.contains(&"apple".to_string()));
+        assert!(avail.contains(&"apricot".to_string()));
+    }
+
+    #[test]
+    fn tab_accepts_suggestion() {
+        let mut ta = TextArea::new()
+            .with_single_line(true)
+            .with_suggestions(vec!["apple".into()]);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(ta.current_suggestion(), Some("apple"));
+        send_key(&mut ta, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "apple");
+    }
+
+    #[test]
+    fn suggestions_ignored_in_multiline() {
+        let mut ta = TextArea::new()
+            .with_suggestions(vec!["apple".into()]);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(ta.current_suggestion(), Option::<&str>::None);
+    }
+
+    #[test]
+    fn right_arrow_at_end_accepts_suggestion() {
+        let mut ta = TextArea::new()
+            .with_single_line(true)
+            .with_suggestions(vec!["apple".into()]);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(ta.current_suggestion(), Some("apple"));
+        send_key(&mut ta, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "apple");
+    }
+
+    #[test]
+    fn exact_match_clears_suggestions() {
+        let mut ta = TextArea::new()
+            .with_single_line(true)
+            .with_suggestions(vec!["hi".into()]);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('h'), KeyModifiers::NONE);
+        assert_eq!(ta.current_suggestion(), Some("hi"));
+        send_key(&mut ta, KeyCode::Char('i'), KeyModifiers::NONE);
+        assert_eq!(ta.current_suggestion(), None);
     }
 }
