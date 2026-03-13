@@ -103,6 +103,8 @@ pub struct TextArea {
     filtered_suggestions: Vec<String>,
     show_suggestions: bool,
     suggestion_index: usize,
+    validate: Option<Box<dyn Fn(&str) -> Result<(), String> + Send>>,
+    err: Option<String>,
 }
 
 /// Style configuration for the text area.
@@ -166,6 +168,8 @@ impl TextArea {
             filtered_suggestions: Vec::new(),
             show_suggestions: true,
             suggestion_index: 0,
+            validate: None,
+            err: None,
         }
     }
 
@@ -322,6 +326,23 @@ impl TextArea {
         self.show_suggestions = show;
     }
 
+    /// Attach a validation function that runs after every content change.
+    ///
+    /// The validator receives the current value and should return `Ok(())`
+    /// when valid or `Err(message)` with a human-readable error string.
+    pub fn with_validate(
+        mut self,
+        f: impl Fn(&str) -> Result<(), String> + Send + 'static,
+    ) -> Self {
+        self.validate = Some(Box::new(f));
+        self
+    }
+
+    /// Return the current validation error, if any.
+    pub fn err(&self) -> Option<&str> {
+        self.err.as_deref()
+    }
+
     /// Filter the suggestion list against the current input value.
     ///
     /// Keeps only suggestions that start with the current value
@@ -339,6 +360,13 @@ impl TextArea {
             .cloned()
             .collect();
         self.suggestion_index = 0;
+    }
+
+    /// Run the validation function against the current value, updating `err`.
+    fn run_validate(&mut self) {
+        if let Some(ref f) = self.validate {
+            self.err = f(&self.value()).err();
+        }
     }
 
     /// Accept the current suggestion, replacing the input content.
@@ -963,6 +991,7 @@ impl Component for TextArea {
                 if self.single_line {
                     self.filter_suggestions();
                 }
+                self.run_validate();
                 Command::message(Message::Changed(self.value()))
             }
             Message::KeyPress(key) if self.focus => {
@@ -982,6 +1011,7 @@ impl Component for TextArea {
                             if self.single_line {
                                 self.filter_suggestions();
                             }
+                            self.run_validate();
                             Command::message(Message::Changed(self.value()))
                         } else {
                             Command::none()
@@ -1001,6 +1031,7 @@ impl Component for TextArea {
                             if self.single_line {
                                 self.filter_suggestions();
                             }
+                            self.run_validate();
                             Command::message(Message::Changed(self.value()))
                         } else {
                             Command::none()
@@ -1022,6 +1053,7 @@ impl Component for TextArea {
                             if self.single_line {
                                 self.filter_suggestions();
                             }
+                            self.run_validate();
                             Command::batch([
                                 Command::message(Message::Cut(text)),
                                 Command::message(Message::Changed(self.value())),
@@ -1043,6 +1075,7 @@ impl Component for TextArea {
                         if self.single_line {
                             self.filter_suggestions();
                         }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Ctrl+U: kill to start of line
@@ -1053,6 +1086,7 @@ impl Component for TextArea {
                         if self.single_line {
                             self.filter_suggestions();
                         }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Ctrl+W / Alt+Backspace: delete word backward
@@ -1063,6 +1097,7 @@ impl Component for TextArea {
                         if self.single_line {
                             self.filter_suggestions();
                         }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Backspace, KeyModifiers::ALT) => {
@@ -1072,6 +1107,7 @@ impl Component for TextArea {
                         if self.single_line {
                             self.filter_suggestions();
                         }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Alt+D: delete word forward
@@ -1082,6 +1118,7 @@ impl Component for TextArea {
                         if self.single_line {
                             self.filter_suggestions();
                         }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Alt+U: uppercase word at cursor
@@ -1092,6 +1129,7 @@ impl Component for TextArea {
                         if self.single_line {
                             self.filter_suggestions();
                         }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Alt+L: lowercase word at cursor
@@ -1102,6 +1140,7 @@ impl Component for TextArea {
                         if self.single_line {
                             self.filter_suggestions();
                         }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Alt+C: capitalize word at cursor
@@ -1112,6 +1151,7 @@ impl Component for TextArea {
                         if self.single_line {
                             self.filter_suggestions();
                         }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Ctrl+Delete: delete word forward
@@ -1122,6 +1162,7 @@ impl Component for TextArea {
                         if self.single_line {
                             self.filter_suggestions();
                         }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Ctrl+Left / Alt+Left: move to previous word boundary
@@ -1193,6 +1234,7 @@ impl Component for TextArea {
                     (KeyCode::Tab, _) => {
                         if self.single_line {
                             if self.accept_suggestion() {
+                                self.run_validate();
                                 Command::message(Message::Changed(self.value()))
                             } else {
                                 Command::none()
@@ -1209,6 +1251,7 @@ impl Component for TextArea {
                                 self.lines[self.cursor_row].insert(self.cursor_col, ' ');
                                 self.cursor_col += 1;
                             }
+                            self.run_validate();
                             Command::message(Message::Changed(self.value()))
                         }
                     }
@@ -1225,6 +1268,7 @@ impl Component for TextArea {
                         if self.single_line {
                             self.filter_suggestions();
                         }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Enter, m) => {
@@ -1249,6 +1293,7 @@ impl Component for TextArea {
                         self.cursor_row += 1;
                         self.cursor_col = 0;
                         self.lines.insert(self.cursor_row, rest);
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Backspace, _) => {
@@ -1274,6 +1319,7 @@ impl Component for TextArea {
                         if self.single_line {
                             self.filter_suggestions();
                         }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Delete, _) => {
@@ -1296,6 +1342,7 @@ impl Component for TextArea {
                         if self.single_line {
                             self.filter_suggestions();
                         }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Left, _) => {
@@ -1316,6 +1363,7 @@ impl Component for TextArea {
                             && self.cursor_col >= self.current_line_len()
                             && self.accept_suggestion()
                         {
+                            self.run_validate();
                             return Command::message(Message::Changed(self.value()));
                         } else if self.cursor_row < self.lines.len() - 1 {
                             self.cursor_row += 1;
@@ -1339,6 +1387,7 @@ impl Component for TextArea {
                                 self.cursor_row = 0;
                                 self.cursor_col = self.lines[0].len();
                                 self.selection_start = None;
+                                self.run_validate();
                                 return Command::message(Message::Changed(self.value()));
                             }
                         }
@@ -1360,6 +1409,7 @@ impl Component for TextArea {
                                     self.cursor_row = 0;
                                     self.cursor_col = self.lines[0].len();
                                     self.selection_start = None;
+                                    self.run_validate();
                                     return Command::message(Message::Changed(self.value()));
                                 }
                             }
@@ -2152,5 +2202,38 @@ mod tests {
         assert_eq!(ta.current_suggestion(), Some("hi"));
         send_key(&mut ta, KeyCode::Char('i'), KeyModifiers::NONE);
         assert_eq!(ta.current_suggestion(), None);
+    }
+
+    #[test]
+    fn validation_sets_error() {
+        let mut ta = TextArea::new()
+            .with_single_line(true)
+            .with_validate(|s| {
+                if s.len() > 3 { Err("Too long".into()) } else { Ok(()) }
+            });
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        assert!(ta.err().is_none());
+        send_key(&mut ta, KeyCode::Char('b'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Char('c'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Char('d'), KeyModifiers::NONE);
+        assert_eq!(ta.err(), Some("Too long"));
+    }
+
+    #[test]
+    fn validation_clears_on_valid() {
+        let mut ta = TextArea::new()
+            .with_single_line(true)
+            .with_validate(|s| {
+                if s.is_empty() { Err("Required".into()) } else { Ok(()) }
+            });
+        ta.focus();
+        assert!(ta.err().is_none());
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        assert!(ta.err().is_none());
+        send_key(&mut ta, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(ta.err(), Some("Required"));
+        send_key(&mut ta, KeyCode::Char('b'), KeyModifiers::NONE);
+        assert!(ta.err().is_none());
     }
 }
