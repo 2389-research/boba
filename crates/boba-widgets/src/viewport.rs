@@ -161,6 +161,8 @@ pub struct Viewport {
     mouse_wheel_delta: u16,
     /// When true, long lines are word-wrapped to fit the available width.
     word_wrap: bool,
+    /// When true, automatically scroll to the bottom whenever content is updated.
+    follow: bool,
     /// Updated during each `view()` call via interior mutability.
     visible_height: Cell<u16>,
     /// Updated during each `view()` call via interior mutability.
@@ -192,6 +194,7 @@ impl Viewport {
             mouse_wheel_enabled: true,
             mouse_wheel_delta: 3,
             word_wrap: false,
+            follow: false,
             padding: Padding::ZERO,
             visible_height: Cell::new(24),
             visible_width: Cell::new(80),
@@ -215,7 +218,11 @@ impl Viewport {
     pub fn set_content(&mut self, content: impl Into<String>) {
         self.content = content.into();
         self.styled_content = None;
-        self.offset = 0;
+        if self.follow {
+            self.offset = u16::MAX;
+        } else {
+            self.offset = 0;
+        }
         self.h_offset = 0;
     }
 
@@ -228,6 +235,9 @@ impl Viewport {
     pub fn set_styled_content(&mut self, lines: Vec<Line<'static>>) {
         self.styled_content = Some(lines);
         self.content.clear();
+        if self.follow {
+            self.offset = u16::MAX;
+        }
     }
 
     /// Set content from a string containing ANSI escape sequences.
@@ -240,7 +250,11 @@ impl Viewport {
         let lines = runeutil::parse_ansi(&s);
         self.styled_content = Some(lines);
         self.content.clear();
-        self.offset = 0;
+        if self.follow {
+            self.offset = u16::MAX;
+        } else {
+            self.offset = 0;
+        }
         self.h_offset = 0;
     }
 
@@ -288,6 +302,14 @@ impl Viewport {
     /// Enable word wrapping for long lines.
     pub fn with_word_wrap(mut self, enabled: bool) -> Self {
         self.word_wrap = enabled;
+        self
+    }
+
+    /// Enable follow mode: automatically scroll to the bottom whenever
+    /// content is updated via `set_content()`, `set_styled_content()`, or
+    /// `set_ansi_content()`.
+    pub fn with_follow(mut self, enabled: bool) -> Self {
+        self.follow = enabled;
         self
     }
 
@@ -609,5 +631,31 @@ mod tests {
         assert_eq!(vp.padding().right, 1);
         assert_eq!(vp.padding().bottom, 1);
         assert_eq!(vp.padding().left, 1);
+    }
+
+    #[test]
+    fn follow_mode_scrolls_to_bottom_on_set_content() {
+        let mut vp = Viewport::new("line1").with_follow(true);
+        vp.set_content("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25");
+        // With follow mode, offset should be set to bottom (u16::MAX, clamped in view)
+        assert_eq!(vp.y_offset(), u16::MAX);
+    }
+
+    #[test]
+    fn follow_mode_scrolls_to_bottom_on_set_styled_content() {
+        use ratatui::text::Line;
+        let mut vp = Viewport::new("").with_follow(true);
+        let lines: Vec<Line<'static>> = (0..30).map(|i| Line::raw(format!("line {i}"))).collect();
+        vp.set_styled_content(lines);
+        assert_eq!(vp.y_offset(), u16::MAX);
+    }
+
+    #[test]
+    fn no_follow_preserves_offset() {
+        let mut vp = Viewport::new("line1");
+        // Default: follow is false
+        vp.set_content("line1\nline2\nline3");
+        // set_content resets offset to 0
+        assert_eq!(vp.y_offset(), 0);
     }
 }
