@@ -1018,4 +1018,16 @@ mod tests {
         list.clear_selections();
         assert!(list.selected_items().is_empty());
     }
+
+    #[test]
+    fn set_items_clears_selections() {
+        let mut list = List::new(vec!["a".to_string(), "b".to_string()])
+            .with_multi_select(true);
+        list.focus();
+        list.update(Message::KeyPress(key(KeyCode::Char(' '))));
+        assert_eq!(list.selected_items().len(), 1);
+
+        list.set_items(vec!["x".to_string(), "y".to_string()]);
+        assert!(list.selected_items().is_empty());
+    }
 }
