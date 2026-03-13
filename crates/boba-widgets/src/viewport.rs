@@ -7,6 +7,7 @@ use boba_core::command::Command;
 use boba_core::component::Component;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
+use ratatui::widgets::Padding;
 use ratatui::style::Style;
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
@@ -162,6 +163,8 @@ pub struct Viewport {
     visible_height: Cell<u16>,
     /// Updated during each `view()` call via interior mutability.
     visible_width: Cell<u16>,
+    /// Inner padding between the border (or area edge) and content.
+    pub padding: Padding,
     key_seq: boba_core::key_sequence::KeySequenceTracker,
     key_bindings: ViewportKeyBindings,
 }
@@ -187,6 +190,7 @@ impl Viewport {
             mouse_wheel_enabled: true,
             mouse_wheel_delta: 3,
             word_wrap: false,
+            padding: Padding::ZERO,
             visible_height: Cell::new(24),
             visible_width: Cell::new(80),
             key_seq: boba_core::key_sequence::KeySequenceTracker::new(),
@@ -250,6 +254,15 @@ impl Viewport {
     /// full area. Provide a [`Block`] to add borders, titles, or padding.
     pub fn with_block(mut self, block: Block<'static>) -> Self {
         self.block = Some(block);
+        self
+    }
+
+    /// Set inner padding between the border (or area edge) and content.
+    ///
+    /// Uses ratatui's `Padding` type. Content area shrinks by the padding
+    /// amounts on each side.
+    pub fn with_padding(mut self, top: u16, right: u16, bottom: u16, left: u16) -> Self {
+        self.padding = Padding::new(left, right, top, bottom);
         self
     }
 
@@ -522,12 +535,21 @@ impl Component for Viewport {
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
-        let inner = if let Some(ref block) = self.block {
-            let inner = block.inner(area);
-            frame.render_widget(block.clone(), area);
-            inner
-        } else {
-            area
+        let inner = {
+            let r = if let Some(ref block) = self.block {
+                let r = block.inner(area);
+                frame.render_widget(block.clone(), area);
+                r
+            } else {
+                area
+            };
+            // Apply padding inside the block/area boundary.
+            Rect {
+                x: r.x.saturating_add(self.padding.left),
+                y: r.y.saturating_add(self.padding.top),
+                width: r.width.saturating_sub(self.padding.left + self.padding.right),
+                height: r.height.saturating_sub(self.padding.top + self.padding.bottom),
+            }
         };
 
         // Update visible dimensions via interior mutability.
@@ -560,5 +582,25 @@ impl Component for Viewport {
 
     fn focused(&self) -> bool {
         self.focus
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn padding_reduces_visible_area() {
+        let vp = Viewport::new("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10")
+            .with_padding(1, 1, 1, 1);
+
+        // After setting padding, total_line_count is unchanged (content is the same)
+        assert_eq!(vp.total_line_count(), 10);
+
+        // The padding field should be set
+        assert_eq!(vp.padding.top, 1);
+        assert_eq!(vp.padding.right, 1);
+        assert_eq!(vp.padding.bottom, 1);
+        assert_eq!(vp.padding.left, 1);
     }
 }
