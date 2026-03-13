@@ -161,8 +161,12 @@ pub struct Viewport {
     mouse_wheel_delta: u16,
     /// When true, long lines are word-wrapped to fit the available width.
     word_wrap: bool,
-    /// When true, automatically scroll to the bottom whenever content is updated.
+    /// When true, follow mode is enabled (user preference).
     follow: bool,
+    /// Tracks whether auto-scroll is currently active. Starts true when follow
+    /// is enabled. Set to false when the user scrolls away from the bottom,
+    /// re-enabled when they scroll back to the bottom.
+    follow_active: bool,
     /// Updated during each `view()` call via interior mutability.
     visible_height: Cell<u16>,
     /// Updated during each `view()` call via interior mutability.
@@ -195,6 +199,7 @@ impl Viewport {
             mouse_wheel_delta: 3,
             word_wrap: false,
             follow: false,
+            follow_active: false,
             padding: Padding::ZERO,
             visible_height: Cell::new(24),
             visible_width: Cell::new(80),
@@ -218,7 +223,7 @@ impl Viewport {
     pub fn set_content(&mut self, content: impl Into<String>) {
         self.content = content.into();
         self.styled_content = None;
-        if self.follow {
+        if self.follow && self.follow_active {
             self.offset = u16::MAX;
         } else {
             self.offset = 0;
@@ -235,7 +240,7 @@ impl Viewport {
     pub fn set_styled_content(&mut self, lines: Vec<Line<'static>>) {
         self.styled_content = Some(lines);
         self.content.clear();
-        if self.follow {
+        if self.follow && self.follow_active {
             self.offset = u16::MAX;
         }
     }
@@ -250,7 +255,7 @@ impl Viewport {
         let lines = runeutil::parse_ansi(&s);
         self.styled_content = Some(lines);
         self.content.clear();
-        if self.follow {
+        if self.follow && self.follow_active {
             self.offset = u16::MAX;
         } else {
             self.offset = 0;
@@ -306,11 +311,23 @@ impl Viewport {
     }
 
     /// Enable follow mode: automatically scroll to the bottom whenever
-    /// content is updated via `set_content()`, `set_styled_content()`, or
-    /// `set_ansi_content()`.
+    /// content is updated, unless the user has scrolled away from the bottom.
+    ///
+    /// When follow is enabled, content updates auto-scroll to the bottom.
+    /// If the user scrolls up, auto-scroll pauses. When they scroll back
+    /// to the bottom, auto-scroll resumes.
     pub fn with_follow(mut self, enabled: bool) -> Self {
         self.follow = enabled;
+        self.follow_active = enabled;
         self
+    }
+
+    /// Whether follow mode is currently auto-scrolling.
+    ///
+    /// Returns `true` when follow is enabled AND the user hasn't scrolled
+    /// away from the bottom. Useful for showing a "scroll locked" indicator.
+    pub fn is_following(&self) -> bool {
+        self.follow && self.follow_active
     }
 
     /// Give focus to the viewport, enabling keyboard scrolling.
@@ -460,7 +477,7 @@ impl Component for Viewport {
         if self.offset > max {
             self.offset = max;
         }
-        match msg {
+        let result = match msg {
             Message::KeyPress(key) if self.focus => {
                 // Check for gg sequence (vim go-to-top)
                 if key.code == KeyCode::Char('g') && key.modifiers == KeyModifiers::NONE {
@@ -468,42 +485,33 @@ impl Component for Viewport {
                         self.key_seq.completes_sequence(KeyCode::Char('g'))
                     {
                         self.offset = 0;
-                        return Command::none();
                     } else {
                         self.key_seq.set_pending(KeyCode::Char('g'));
                         return Command::none();
                     }
-                }
-                self.key_seq.clear();
-                if self.key_bindings.up.matches(&key) {
-                    self.offset = self.offset.saturating_sub(1);
-                    Command::none()
-                } else if self.key_bindings.down.matches(&key) {
-                    self.offset = self.offset.saturating_add(1);
-                    Command::none()
-                } else if self.key_bindings.left.matches(&key) {
-                    self.h_offset = self.h_offset.saturating_sub(1);
-                    Command::none()
-                } else if self.key_bindings.right.matches(&key) {
-                    self.h_offset = self.h_offset.saturating_add(1);
-                    Command::none()
-                } else if self.key_bindings.page_up.matches(&key) {
-                    let vh = self.visible_height.get();
-                    self.offset = self.offset.saturating_sub(vh);
-                    Command::none()
-                } else if self.key_bindings.page_down.matches(&key) {
-                    let vh = self.visible_height.get();
-                    self.offset = self.offset.saturating_add(vh);
-                    Command::none()
-                } else if self.key_bindings.first.matches(&key) {
-                    self.offset = 0;
-                    Command::none()
-                } else if self.key_bindings.last.matches(&key) {
-                    self.offset = u16::MAX; // Will be clamped in view
-                    Command::none()
                 } else {
-                    Command::none()
+                    self.key_seq.clear();
+                    if self.key_bindings.up.matches(&key) {
+                        self.offset = self.offset.saturating_sub(1);
+                    } else if self.key_bindings.down.matches(&key) {
+                        self.offset = self.offset.saturating_add(1);
+                    } else if self.key_bindings.left.matches(&key) {
+                        self.h_offset = self.h_offset.saturating_sub(1);
+                    } else if self.key_bindings.right.matches(&key) {
+                        self.h_offset = self.h_offset.saturating_add(1);
+                    } else if self.key_bindings.page_up.matches(&key) {
+                        let vh = self.visible_height.get();
+                        self.offset = self.offset.saturating_sub(vh);
+                    } else if self.key_bindings.page_down.matches(&key) {
+                        let vh = self.visible_height.get();
+                        self.offset = self.offset.saturating_add(vh);
+                    } else if self.key_bindings.first.matches(&key) {
+                        self.offset = 0;
+                    } else if self.key_bindings.last.matches(&key) {
+                        self.offset = u16::MAX; // Will be clamped in view
+                    }
                 }
+                Command::none()
             }
             Message::ScrollUp(n) => {
                 self.offset = self.offset.saturating_sub(n);
@@ -560,7 +568,14 @@ impl Component for Viewport {
                 Command::none()
             }
             _ => Command::none(),
+        };
+        // After any scroll action, update follow_active: if the user scrolled
+        // back to the bottom, re-enable auto-scroll; if they scrolled away,
+        // pause it.
+        if self.follow {
+            self.follow_active = self.at_bottom();
         }
+        result
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
@@ -637,7 +652,7 @@ mod tests {
     fn follow_mode_scrolls_to_bottom_on_set_content() {
         let mut vp = Viewport::new("line1").with_follow(true);
         vp.set_content("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25");
-        // With follow mode, offset should be set to bottom (u16::MAX, clamped in view)
+        // With follow mode active, offset should be set to bottom
         assert_eq!(vp.y_offset(), u16::MAX);
     }
 
@@ -665,5 +680,51 @@ mod tests {
         vp.set_content("line1\nline2\nline3");
         // set_content resets offset to 0
         assert_eq!(vp.y_offset(), 0);
+    }
+
+    #[test]
+    fn follow_pauses_when_user_scrolls_up() {
+        let mut vp = Viewport::new("").with_follow(true);
+        assert!(vp.is_following());
+
+        // Give it enough content to scroll (more lines than visible_height)
+        let many_lines = (0..50).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        vp.set_content(&many_lines);
+        assert_eq!(vp.y_offset(), u16::MAX);
+
+        // User scrolls up — follow should pause
+        vp.update(Message::ScrollUp(5));
+        assert!(!vp.is_following());
+
+        // Content update should NOT auto-scroll now
+        let more_lines = (0..60).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        vp.set_content(&more_lines);
+        assert_eq!(vp.y_offset(), 0); // reset to 0, not MAX
+    }
+
+    #[test]
+    fn follow_resumes_when_user_scrolls_to_bottom() {
+        let mut vp = Viewport::new("").with_follow(true);
+        let many_lines = (0..50).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        vp.set_content(&many_lines);
+
+        // Scroll up to pause follow
+        vp.update(Message::ScrollUp(5));
+        assert!(!vp.is_following());
+
+        // Scroll back to bottom — follow should resume
+        vp.update(Message::ScrollToBottom);
+        assert!(vp.is_following());
+
+        // Content update should auto-scroll again
+        let more_lines = (0..60).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        vp.set_content(&more_lines);
+        assert_eq!(vp.y_offset(), u16::MAX);
+    }
+
+    #[test]
+    fn is_following_false_when_follow_disabled() {
+        let vp = Viewport::new("hello");
+        assert!(!vp.is_following());
     }
 }
