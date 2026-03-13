@@ -532,6 +532,7 @@ impl<I: Item> List<I> {
     pub fn insert_item(&mut self, index: usize, item: I) {
         let index = index.min(self.items.len());
         self.items.insert(index, item);
+        self.selected_set.clear();
         self.rebuild_filtered_indices();
         self.selection.set_count(self.filtered_indices.len());
         self.sync_list_state();
@@ -543,6 +544,7 @@ impl<I: Item> List<I> {
             return None;
         }
         let removed = self.items.remove(index);
+        self.selected_set.clear();
         self.rebuild_filtered_indices();
         self.selection.set_count(self.filtered_indices.len());
         self.sync_list_state();
@@ -553,6 +555,7 @@ impl<I: Item> List<I> {
     pub fn set_item(&mut self, index: usize, item: I) {
         if index < self.items.len() {
             self.items[index] = item;
+            self.selected_set.clear();
             self.rebuild_filtered_indices();
             self.selection.set_count(self.filtered_indices.len());
             self.sync_list_state();
@@ -1019,6 +1022,30 @@ mod tests {
         assert_eq!(list.selected_items().len(), 2);
 
         list.clear_selections();
+        assert!(list.selected_items().is_empty());
+    }
+
+    #[test]
+    fn insert_item_clears_selections() {
+        let mut list = List::new(vec!["a".to_string(), "b".to_string()])
+            .with_multi_select(true);
+        list.focus();
+        list.update(Message::KeyPress(key(KeyCode::Char(' '))));
+        assert_eq!(list.selected_items().len(), 1);
+
+        list.insert_item(1, "x".to_string());
+        assert!(list.selected_items().is_empty());
+    }
+
+    #[test]
+    fn remove_item_clears_selections() {
+        let mut list = List::new(vec!["a".to_string(), "b".to_string()])
+            .with_multi_select(true);
+        list.focus();
+        list.update(Message::KeyPress(key(KeyCode::Char(' '))));
+        assert_eq!(list.selected_items().len(), 1);
+
+        list.remove_item(0);
         assert!(list.selected_items().is_empty());
     }
 
