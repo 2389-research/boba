@@ -26,6 +26,20 @@ pub enum SubmitBinding {
     None,
 }
 
+/// Controls how input text is displayed.
+///
+/// Only meaningful in single-line mode.
+#[derive(Debug, Clone, Default)]
+pub enum EchoMode {
+    /// Display characters as typed.
+    #[default]
+    Normal,
+    /// Display each character as the given mask character.
+    Password(char),
+    /// Display nothing.
+    Hidden,
+}
+
 /// Messages for the text area component.
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -84,6 +98,7 @@ pub struct TextArea {
     /// Horizontal scroll offset for single-line mode.
     h_offset: usize,
     placeholder: String,
+    echo_mode: EchoMode,
 }
 
 /// Style configuration for the text area.
@@ -139,6 +154,7 @@ impl TextArea {
             submit_binding: SubmitBinding::None,
             h_offset: 0,
             placeholder: String::new(),
+            echo_mode: EchoMode::Normal,
         }
     }
 
@@ -237,6 +253,21 @@ impl TextArea {
     pub fn with_submit(mut self, binding: SubmitBinding) -> Self {
         self.submit_binding = binding;
         self
+    }
+
+    /// Set the echo mode for displaying input text.
+    ///
+    /// Only meaningful in single-line mode. In `Password` mode, each character
+    /// is replaced with the given mask character. In `Hidden` mode, nothing is
+    /// rendered.
+    pub fn with_echo_mode(mut self, mode: EchoMode) -> Self {
+        self.echo_mode = mode;
+        self
+    }
+
+    /// Return the current echo mode.
+    pub fn echo_mode(&self) -> &EchoMode {
+        &self.echo_mode
     }
 
     /// Push a value into the input history.
@@ -689,6 +720,17 @@ impl TextArea {
             return;
         }
 
+        // Hidden echo mode: render prompt only (no content, no cursor).
+        if matches!(self.echo_mode, EchoMode::Hidden) {
+            let mut spans = Vec::new();
+            if let Some(ref prompt) = self.line_prompt {
+                spans.push(Span::styled(prompt.clone(), self.style.prompt));
+            }
+            let paragraph = Paragraph::new(Line::from(spans));
+            frame.render_widget(paragraph, inner);
+            return;
+        }
+
         // Compute horizontal offset so cursor stays visible (same logic
         // as update_h_offset but without mutating self).
         let h_off = if self.cursor_col < self.h_offset {
@@ -699,7 +741,15 @@ impl TextArea {
             self.h_offset
         };
 
-        let line_chars = &self.lines[0];
+        // For Password echo mode, replace each character with the mask.
+        let masked;
+        let line_chars = match self.echo_mode {
+            EchoMode::Password(mask) => {
+                masked = vec![mask; self.lines[0].len()];
+                &masked
+            }
+            _ => &self.lines[0],
+        };
         let line_len = line_chars.len();
 
         // Determine if overflow indicators are needed
@@ -1854,5 +1904,28 @@ mod tests {
     fn prompt_builder() {
         let ta = TextArea::new().with_prompt("> ");
         assert_eq!(ta.value(), "");
+    }
+
+    #[test]
+    fn echo_mode_password() {
+        let mut ta = TextArea::new()
+            .with_single_line(true)
+            .with_echo_mode(EchoMode::Password('*'));
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('s'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Char('e'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Char('c'), KeyModifiers::NONE);
+        assert_eq!(ta.value(), "sec");
+        assert!(matches!(ta.echo_mode(), EchoMode::Password('*')));
+    }
+
+    #[test]
+    fn echo_mode_hidden() {
+        let ta = TextArea::new()
+            .with_single_line(true)
+            .with_echo_mode(EchoMode::Hidden)
+            .with_content("secret");
+        assert_eq!(ta.value(), "secret");
+        assert!(matches!(ta.echo_mode(), EchoMode::Hidden));
     }
 }
