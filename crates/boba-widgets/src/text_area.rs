@@ -817,17 +817,31 @@ impl TextArea {
         }
     }
 
-    /// Delete the word after the cursor.
+    /// Delete the word after the cursor using emacs/readline-style word
+    /// boundaries: skip non-alphanumeric characters, then delete alphanumeric
+    /// characters.
     fn delete_word_forward(&mut self) {
-        let boundary = self.next_word_boundary();
-        if boundary > self.cursor_col {
-            self.lines[self.cursor_row].drain(self.cursor_col..boundary);
-        } else if self.cursor_col >= self.current_line_len()
-            && self.cursor_row < self.lines.len() - 1
-        {
-            // At the end of a line, join with the next line
-            let next = self.lines.remove(self.cursor_row + 1);
-            self.lines[self.cursor_row].extend(next);
+        let line = &self.lines[self.cursor_row];
+        let len = line.len();
+        if self.cursor_col >= len {
+            if self.cursor_row < self.lines.len() - 1 {
+                // At end of line, join with next line
+                let next = self.lines.remove(self.cursor_row + 1);
+                self.lines[self.cursor_row].extend(next);
+            }
+            return;
+        }
+        let mut end = self.cursor_col;
+        // Skip non-alphanumeric characters
+        while end < len && !self.lines[self.cursor_row][end].is_alphanumeric() {
+            end += 1;
+        }
+        // Delete alphanumeric characters
+        while end < len && self.lines[self.cursor_row][end].is_alphanumeric() {
+            end += 1;
+        }
+        if end > self.cursor_col {
+            self.lines[self.cursor_row].drain(self.cursor_col..end);
         }
     }
 
@@ -2029,7 +2043,8 @@ mod tests {
         ta.focus();
         ta.cursor_col = 0;
         send_key(&mut ta, KeyCode::Char('d'), KeyModifiers::ALT);
-        assert_eq!(ta.value(), "world");
+        // Emacs-style: skip non-alnum (none), delete alnum "hello" → " world"
+        assert_eq!(ta.value(), " world");
         send_key(&mut ta, KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(ta.value(), "hello world");
     }
