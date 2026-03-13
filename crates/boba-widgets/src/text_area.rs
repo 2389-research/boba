@@ -81,6 +81,8 @@ pub struct TextArea {
     block: Option<Block<'static>>,
     single_line: bool,
     submit_binding: SubmitBinding,
+    /// Horizontal scroll offset for single-line mode.
+    h_offset: usize,
 }
 
 /// Style configuration for the text area.
@@ -128,6 +130,7 @@ impl TextArea {
             block: None,
             single_line: false,
             submit_binding: SubmitBinding::None,
+            h_offset: 0,
         }
     }
 
@@ -325,6 +328,25 @@ impl TextArea {
     /// Return the current cursor column.
     pub fn cursor_col(&self) -> usize {
         self.cursor_col
+    }
+
+    /// Return the current horizontal scroll offset (single-line mode).
+    pub fn h_offset(&self) -> usize {
+        self.h_offset
+    }
+
+    /// Update the horizontal offset so the cursor stays visible within
+    /// the given available width. Called internally during `view()` and
+    /// exposed for testing.
+    pub fn update_h_offset(&mut self, available_width: usize) {
+        if available_width == 0 {
+            return;
+        }
+        if self.cursor_col < self.h_offset {
+            self.h_offset = self.cursor_col;
+        } else if self.cursor_col >= self.h_offset + available_width {
+            self.h_offset = self.cursor_col.saturating_sub(available_width) + 1;
+        }
     }
 
     /// Return whether there is an active selection.
@@ -632,6 +654,92 @@ impl TextArea {
         } else {
             false
         }
+    }
+
+    /// Render the text area in single-line mode with horizontal scrolling
+    /// and overflow indicators.
+    fn view_single_line(&self, frame: &mut Frame, inner: Rect) {
+        let prompt_width = self.line_prompt.as_ref().map(|p| p.len()).unwrap_or(0);
+        let total_width = inner.width as usize;
+        let available = total_width.saturating_sub(prompt_width);
+
+        if available == 0 {
+            return;
+        }
+
+        // Compute horizontal offset so cursor stays visible (same logic
+        // as update_h_offset but without mutating self).
+        let h_off = if self.cursor_col < self.h_offset {
+            self.cursor_col
+        } else if self.cursor_col >= self.h_offset + available {
+            self.cursor_col.saturating_sub(available) + 1
+        } else {
+            self.h_offset
+        };
+
+        let line_chars = &self.lines[0];
+        let line_len = line_chars.len();
+
+        // Determine if overflow indicators are needed
+        let has_left_overflow = h_off > 0;
+        let has_right_overflow = h_off + available < line_len;
+
+        // Slice the visible window from line content
+        let visible_end = (h_off + available).min(line_len);
+        let mut visible: Vec<char> = line_chars[h_off..visible_end].to_vec();
+
+        // Pad with spaces if content is shorter than available width
+        while visible.len() < available {
+            visible.push(' ');
+        }
+
+        // Replace edge characters with overflow indicators
+        if has_left_overflow && !visible.is_empty() {
+            visible[0] = '\u{2026}'; // …
+        }
+        if has_right_overflow && !visible.is_empty() {
+            let last = visible.len() - 1;
+            visible[last] = '\u{2026}'; // …
+        }
+
+        let mut spans = Vec::new();
+
+        if let Some(ref prompt) = self.line_prompt {
+            spans.push(Span::styled(prompt.clone(), self.style.text));
+        }
+
+        // Render the visible slice with cursor highlighting
+        if self.focus {
+            let cursor_in_visible = self.cursor_col.saturating_sub(h_off);
+            let before: String = visible[..cursor_in_visible].iter().collect();
+            let cursor_char = visible.get(cursor_in_visible);
+            let after_start = cursor_in_visible + 1;
+            let after: String = if after_start < visible.len() {
+                visible[after_start..].iter().collect()
+            } else {
+                String::new()
+            };
+
+            if !before.is_empty() {
+                spans.push(Span::styled(before, self.style.text));
+            }
+            if let Some(&c) = cursor_char {
+                // If the character is a padding space at the end of content,
+                // render it as a cursor block.
+                spans.push(Span::styled(c.to_string(), self.style.cursor));
+            } else {
+                spans.push(Span::styled(" ", self.style.cursor));
+            }
+            if !after.is_empty() {
+                spans.push(Span::styled(after, self.style.text));
+            }
+        } else {
+            let text: String = visible.iter().collect();
+            spans.push(Span::styled(text, self.style.text));
+        }
+
+        let paragraph = Paragraph::new(Line::from(spans));
+        frame.render_widget(paragraph, inner);
     }
 }
 
@@ -1041,6 +1149,14 @@ impl Component for TextArea {
         } else {
             area
         };
+
+        // Single-line mode uses a separate rendering path with horizontal
+        // scrolling and no line numbers or vertical scroll.
+        if self.single_line {
+            self.view_single_line(frame, inner);
+            return;
+        }
+
         let visible_height = inner.height as usize;
 
         // Adjust scroll to keep cursor visible
@@ -1642,5 +1758,46 @@ mod tests {
         assert_eq!(ta.value(), "hello world");
         assert_eq!(ta.cursor_col(), 11);
         assert_eq!(ta.cursor_row(), 0);
+    }
+
+    #[test]
+    fn single_line_h_offset_accessor() {
+        let ta = TextArea::new().with_single_line(true);
+        assert_eq!(ta.h_offset(), 0);
+    }
+
+    #[test]
+    fn single_line_h_offset_advances_with_cursor() {
+        let mut ta = TextArea::new().with_single_line(true);
+        ta.focus();
+        // Type enough characters to exceed a small visible width
+        for c in "abcdefghijklmnopqrstuvwxyz".chars() {
+            send_key(&mut ta, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        assert_eq!(ta.cursor_col(), 26);
+        // After updating h_offset with a small available width, offset should advance
+        ta.update_h_offset(10);
+        assert!(ta.h_offset() > 0, "h_offset should advance when cursor is past visible width");
+        // Cursor should be visible: h_offset <= cursor_col < h_offset + available
+        assert!(ta.cursor_col() >= ta.h_offset());
+        assert!(ta.cursor_col() < ta.h_offset() + 10);
+    }
+
+    #[test]
+    fn single_line_h_offset_tracks_back() {
+        let mut ta = TextArea::new().with_single_line(true);
+        ta.focus();
+        // Type enough characters to force scrolling
+        for c in "abcdefghijklmnopqrstuvwxyz".chars() {
+            send_key(&mut ta, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        ta.update_h_offset(10);
+        assert!(ta.h_offset() > 0);
+
+        // Move cursor back to the beginning
+        send_key(&mut ta, KeyCode::Home, KeyModifiers::NONE);
+        assert_eq!(ta.cursor_col(), 0);
+        ta.update_h_offset(10);
+        assert_eq!(ta.h_offset(), 0, "h_offset should track back to 0 when cursor is at start");
     }
 }
