@@ -651,6 +651,14 @@ mod tests {
     }
 
     #[test]
+    fn follow_mode_scrolls_to_bottom_on_set_ansi_content() {
+        let mut vp = Viewport::new("").with_follow(true);
+        let content = (0..30).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        vp.set_ansi_content(content);
+        assert_eq!(vp.y_offset(), u16::MAX);
+    }
+
+    #[test]
     fn no_follow_preserves_offset() {
         let mut vp = Viewport::new("line1");
         // Default: follow is false
