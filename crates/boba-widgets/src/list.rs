@@ -1,3 +1,6 @@
+// ABOUTME: Scrollable, filterable list widget with single and multi-select modes.
+// ABOUTME: Features custom item delegates, spinner integration, keyboard navigation, and filtering.
+
 //! Selectable list component with filtering, multi-select, custom item
 //! delegates, spinner integration, and item descriptions.
 
