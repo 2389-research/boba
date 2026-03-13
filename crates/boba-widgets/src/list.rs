@@ -1,6 +1,8 @@
 //! Selectable list component with filtering, multi-select, custom item
 //! delegates, spinner integration, and item descriptions.
 
+use std::collections::BTreeSet;
+
 use boba_core::command::Command;
 use boba_core::component::Component;
 use boba_core::key_sequence::KeySequenceTracker;
@@ -134,6 +136,8 @@ pub enum Message {
     FilterChanged(String),
     /// The filter input was toggled on or off.
     ToggleFilter,
+    /// An item was toggled in multi-select mode (index, now_selected).
+    Toggled(usize, bool),
     /// Internal tick used to advance the loading spinner animation.
     SpinnerTick,
 }
@@ -268,6 +272,8 @@ pub struct List<I: Item> {
     spinner: Option<crate::spinner::Spinner>,
     key_seq: KeySequenceTracker,
     key_bindings: ListKeyBindings,
+    multi_select: bool,
+    selected_set: BTreeSet<usize>,
 }
 
 /// Style configuration for the list.
@@ -322,6 +328,8 @@ impl<I: Item> List<I> {
             spinner: None,
             key_seq: KeySequenceTracker::new(),
             key_bindings: ListKeyBindings::default(),
+            multi_select: false,
+            selected_set: BTreeSet::new(),
         }
     }
 
@@ -367,6 +375,24 @@ impl<I: Item> List<I> {
     /// Get a reference to the current key bindings.
     pub fn key_bindings(&self) -> &ListKeyBindings {
         &self.key_bindings
+    }
+
+    /// Enable multi-select mode. When enabled, Space toggles items and
+    /// `selected_items()` returns all toggled indices.
+    pub fn with_multi_select(mut self, enabled: bool) -> Self {
+        self.multi_select = enabled;
+        self
+    }
+
+    /// Get the set of selected item indices (multi-select mode).
+    /// Returns an empty set when multi-select is disabled.
+    pub fn selected_items(&self) -> &BTreeSet<usize> {
+        &self.selected_set
+    }
+
+    /// Clear all multi-select selections.
+    pub fn clear_selections(&mut self) {
+        self.selected_set.clear();
     }
 
     /// Set the loading state. When loading is true and a spinner is present,
@@ -434,6 +460,7 @@ impl<I: Item> List<I> {
     /// Replace all items, rebuilding the filter and clamping the selection.
     pub fn set_items(&mut self, items: Vec<I>) {
         self.items = items;
+        self.selected_set.clear();
         self.rebuild_filtered_indices();
         self.selection.set_count(self.filtered_indices.len());
         self.sync_list_state();
@@ -739,6 +766,18 @@ impl<I: Item> Component for List<I> {
                         return Command::message(Message::Select(i));
                     }
                     Command::none()
+                } else if self.multi_select && key.code == KeyCode::Char(' ') && key.modifiers == KeyModifiers::NONE {
+                    if let Some(original_idx) = self.selected() {
+                        let toggled_on = if self.selected_set.contains(&original_idx) {
+                            self.selected_set.remove(&original_idx);
+                            false
+                        } else {
+                            self.selected_set.insert(original_idx);
+                            true
+                        };
+                        return Command::message(Message::Toggled(original_idx, toggled_on));
+                    }
+                    Command::none()
                 } else if self.key_bindings.confirm.matches(&key) {
                     if let Some(i) = self.selected() {
                         return Command::message(Message::Confirm(i));
@@ -907,5 +946,76 @@ impl<I: Item> Component for List<I> {
 
     fn focused(&self) -> bool {
         self.focus
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use boba_core::component::Component;
+    use crossterm::event::{KeyEventKind, KeyEventState};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    #[test]
+    fn multi_select_toggle() {
+        let mut list = List::new(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+            .with_multi_select(true);
+        list.focus();
+
+        // Space toggles current item (index 0)
+        let cmd = list.update(Message::KeyPress(key(KeyCode::Char(' '))));
+        assert!(matches!(cmd.into_message(), Some(Message::Toggled(0, true))));
+        assert_eq!(list.selected_items(), &BTreeSet::from([0]));
+
+        // Move down and toggle index 1
+        list.update(Message::KeyPress(key(KeyCode::Down)));
+        list.update(Message::KeyPress(key(KeyCode::Char(' '))));
+        assert_eq!(list.selected_items(), &BTreeSet::from([0, 1]));
+
+        // Toggle index 0 off — move back up and space
+        list.update(Message::KeyPress(key(KeyCode::Up)));
+        let cmd = list.update(Message::KeyPress(key(KeyCode::Char(' '))));
+        assert!(matches!(cmd.into_message(), Some(Message::Toggled(0, false))));
+        assert_eq!(list.selected_items(), &BTreeSet::from([1]));
+    }
+
+    #[test]
+    fn multi_select_disabled_by_default() {
+        let list = List::new(vec!["a".to_string(), "b".to_string()]);
+        assert!(list.selected_items().is_empty());
+    }
+
+    #[test]
+    fn multi_select_space_does_nothing_when_disabled() {
+        let mut list = List::new(vec!["a".to_string(), "b".to_string()]);
+        list.focus();
+
+        let cmd = list.update(Message::KeyPress(key(KeyCode::Char(' '))));
+        // Space should not emit Toggled when multi_select is false
+        assert!(cmd.is_none());
+        assert!(list.selected_items().is_empty());
+    }
+
+    #[test]
+    fn multi_select_clear_selections() {
+        let mut list = List::new(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+            .with_multi_select(true);
+        list.focus();
+
+        list.update(Message::KeyPress(key(KeyCode::Char(' '))));
+        list.update(Message::KeyPress(key(KeyCode::Down)));
+        list.update(Message::KeyPress(key(KeyCode::Char(' '))));
+        assert_eq!(list.selected_items().len(), 2);
+
+        list.clear_selections();
+        assert!(list.selected_items().is_empty());
     }
 }
