@@ -12,6 +12,20 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Wrap};
 use ratatui::Frame;
 
+/// Controls which key combination triggers a submit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SubmitBinding {
+    /// Enter key submits.
+    Enter,
+    /// Shift+Enter submits.
+    ShiftEnter,
+    /// Ctrl+Enter submits.
+    CtrlEnter,
+    /// No submit key; all Enter variants insert newlines.
+    #[default]
+    None,
+}
+
 /// Messages for the text area component.
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -25,6 +39,8 @@ pub enum Message {
     Copy(String),
     /// Emitted with selected text on Ctrl+X.
     Cut(String),
+    /// Emitted when the user triggers the submit binding.
+    Submit(String),
 }
 
 type UndoEntry = (Vec<Vec<char>>, (usize, usize));
@@ -63,6 +79,8 @@ pub struct TextArea {
     line_prompt: Option<String>,
     history: Option<boba_core::input_history::InputHistory>,
     block: Option<Block<'static>>,
+    single_line: bool,
+    submit_binding: SubmitBinding,
 }
 
 /// Style configuration for the text area.
@@ -108,6 +126,8 @@ impl TextArea {
             line_prompt: None,
             history: None,
             block: None,
+            single_line: false,
+            submit_binding: SubmitBinding::None,
         }
     }
 
@@ -167,6 +187,30 @@ impl TextArea {
     /// Set a block (border/title) to wrap the text area.
     pub fn with_block(mut self, block: Block<'static>) -> Self {
         self.block = Some(block);
+        self
+    }
+
+    /// Enable single-line mode.
+    ///
+    /// In single-line mode, Enter submits (unless overridden), pasted text
+    /// has newlines stripped, and Up/Down always browse history.
+    ///
+    /// When enabling single-line mode, the submit binding is automatically
+    /// set to `Enter` if it was `None`. Use `with_submit()` to override.
+    pub fn with_single_line(mut self, single_line: bool) -> Self {
+        self.single_line = single_line;
+        if single_line && self.submit_binding == SubmitBinding::None {
+            self.submit_binding = SubmitBinding::Enter;
+        }
+        self
+    }
+
+    /// Set the key binding that triggers a submit.
+    ///
+    /// Works in both single-line and multi-line modes. When a submit
+    /// binding is active, the non-submit Enter variants insert newlines.
+    pub fn with_submit(mut self, binding: SubmitBinding) -> Self {
+        self.submit_binding = binding;
         self
     }
 
@@ -603,6 +647,12 @@ impl Component for TextArea {
     fn update(&mut self, msg: Message) -> Command<Message> {
         match msg {
             Message::Paste(text) if self.focus => {
+                // In single-line mode, strip newlines from pasted text.
+                let text = if self.single_line {
+                    text.replace('\n', "").replace('\r', "")
+                } else {
+                    text
+                };
                 self.push_undo();
                 self.delete_selection();
                 if let Some(limit) = self.char_limit {
@@ -830,7 +880,22 @@ impl Component for TextArea {
                         self.cursor_col += 1;
                         Command::message(Message::Changed(self.value()))
                     }
-                    (KeyCode::Enter, _) => {
+                    (KeyCode::Enter, m) => {
+                        let is_submit = match self.submit_binding {
+                            SubmitBinding::Enter => {
+                                !m.contains(KeyModifiers::SHIFT)
+                                    && !m.contains(KeyModifiers::CONTROL)
+                            }
+                            SubmitBinding::ShiftEnter => m.contains(KeyModifiers::SHIFT),
+                            SubmitBinding::CtrlEnter => m.contains(KeyModifiers::CONTROL),
+                            SubmitBinding::None => false,
+                        };
+                        if is_submit {
+                            return Command::message(Message::Submit(self.value()));
+                        }
+                        if self.single_line {
+                            return Command::none();
+                        }
                         self.push_undo();
                         self.delete_selection();
                         let rest = self.lines[self.cursor_row].split_off(self.cursor_col);
@@ -903,10 +968,10 @@ impl Component for TextArea {
                         Command::none()
                     }
                     (KeyCode::Up, _) if !shift => {
-                        // History browsing: when buffer is a single line and
-                        // cursor is on the first row, browse history instead
-                        // of moving the cursor.
-                        if self.lines.len() == 1 && self.cursor_row == 0 {
+                        // History browsing: in single-line mode always try
+                        // history; in multi-line mode only when the buffer
+                        // happens to be a single line.
+                        if self.single_line || (self.lines.len() == 1 && self.cursor_row == 0) {
                             let current = self.value();
                             let entry = self
                                 .history
@@ -929,9 +994,10 @@ impl Component for TextArea {
                         Command::none()
                     }
                     (KeyCode::Down, _) if !shift => {
-                        // History browsing: when buffer is a single line and
-                        // cursor is on the last row, browse history instead.
-                        if self.lines.len() == 1 && self.cursor_row == 0 {
+                        // History browsing: in single-line mode always try
+                        // history; in multi-line mode only when the buffer
+                        // happens to be a single line.
+                        if self.single_line || (self.lines.len() == 1 && self.cursor_row == 0) {
                             if let Some(ref mut history) = self.history {
                                 if let Some(entry) = history.newer().map(|s| s.to_owned()) {
                                     self.lines = vec![entry.chars().collect()];
@@ -1486,6 +1552,84 @@ mod tests {
         assert_eq!(ta.cursor_row(), 0);
         // Value unchanged (not history entry)
         assert_eq!(ta.value(), "line1\nline2");
+    }
+
+    #[test]
+    fn single_line_enter_submits() {
+        let mut ta = TextArea::new().with_single_line(true);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('h'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Char('i'), KeyModifiers::NONE);
+        let cmd = send_key(&mut ta, KeyCode::Enter, KeyModifiers::NONE);
+        match cmd.into_message() {
+            Some(Message::Submit(s)) => assert_eq!(s, "hi"),
+            other => panic!("Expected Submit(\"hi\"), got {:?}", other),
+        }
+        assert_eq!(ta.line_count(), 1);
+    }
+
+    #[test]
+    fn single_line_paste_strips_newlines() {
+        let mut ta = TextArea::new().with_single_line(true);
+        ta.focus();
+        ta.update(Message::Paste("hello\nworld\nfoo".into()));
+        assert_eq!(ta.value(), "helloworldfoo");
+        assert_eq!(ta.line_count(), 1);
+    }
+
+    #[test]
+    fn single_line_up_down_browse_history() {
+        let mut ta = TextArea::new()
+            .with_single_line(true)
+            .with_history(10);
+        ta.focus();
+        ta.push_history("first");
+        ta.push_history("second");
+        send_key(&mut ta, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "second");
+        send_key(&mut ta, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "first");
+        send_key(&mut ta, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "second");
+    }
+
+    #[test]
+    fn multiline_submit_with_ctrl_enter() {
+        let mut ta = TextArea::new()
+            .with_submit(SubmitBinding::CtrlEnter);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('h'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Char('i'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(ta.line_count(), 2);
+        let cmd = send_key(&mut ta, KeyCode::Enter, KeyModifiers::CONTROL);
+        match cmd.into_message() {
+            Some(Message::Submit(s)) => assert_eq!(s, "hi\n"),
+            other => panic!("Expected Submit, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn multiline_enter_submit_shift_enter_newline() {
+        let mut ta = TextArea::new()
+            .with_submit(SubmitBinding::Enter);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Enter, KeyModifiers::SHIFT);
+        assert_eq!(ta.line_count(), 2);
+        let cmd = send_key(&mut ta, KeyCode::Enter, KeyModifiers::NONE);
+        match cmd.into_message() {
+            Some(Message::Submit(_)) => {}
+            other => panic!("Expected Submit, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn multiline_no_submit_binding_all_enters_newline() {
+        let mut ta = TextArea::new();
+        ta.focus();
+        send_key(&mut ta, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(ta.line_count(), 2);
     }
 
     #[test]
