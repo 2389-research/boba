@@ -105,6 +105,9 @@ pub struct TextArea {
     suggestion_index: usize,
     validate: Option<Box<dyn Fn(&str) -> Result<(), String> + Send>>,
     err: Option<String>,
+    /// When set, caps the visible height used for rendering and scroll
+    /// calculations. `visual_height()` also respects this limit.
+    max_visible_lines: Option<u16>,
 }
 
 /// Style configuration for the text area.
@@ -170,6 +173,7 @@ impl TextArea {
             suggestion_index: 0,
             validate: None,
             err: None,
+            max_visible_lines: None,
         }
     }
 
@@ -338,6 +342,15 @@ impl TextArea {
         self
     }
 
+    /// Cap the visible height of the widget to at most `n` lines.
+    ///
+    /// When set, scroll calculations and `visual_height()` will not
+    /// exceed this value. Has no effect in single-line mode.
+    pub fn with_max_visible_lines(mut self, n: u16) -> Self {
+        self.max_visible_lines = Some(n);
+        self
+    }
+
     /// Return the current validation error, if any.
     pub fn err(&self) -> Option<&str> {
         self.err.as_deref()
@@ -500,6 +513,35 @@ impl TextArea {
     /// Return the current horizontal scroll offset (single-line mode).
     pub fn h_offset(&self) -> usize {
         self.h_offset
+    }
+
+    /// Returns the visual height this widget would occupy at the given width.
+    ///
+    /// Accounts for soft wrapping and max_visible_lines if set. In single-line
+    /// mode, always returns 1.
+    pub fn visual_height(&self, width: u16) -> u16 {
+        let raw = if self.single_line {
+            1
+        } else if self.soft_wrap && width > 0 {
+            let w = width as usize;
+            self.lines
+                .iter()
+                .map(|line| {
+                    let len = line.len();
+                    if len == 0 {
+                        1
+                    } else {
+                        ((len + w - 1) / w) as u16
+                    }
+                })
+                .sum()
+        } else {
+            self.lines.len() as u16
+        };
+        match self.max_visible_lines {
+            Some(max) => raw.min(max),
+            None => raw,
+        }
     }
 
     /// Update the horizontal offset so the cursor stays visible within
@@ -1467,7 +1509,10 @@ impl Component for TextArea {
             return;
         }
 
-        let visible_height = inner.height as usize;
+        let visible_height = match self.max_visible_lines {
+            Some(max) => (inner.height as usize).min(max as usize),
+            None => inner.height as usize,
+        };
 
         // Adjust scroll to keep cursor visible
         let scroll = if self.cursor_row < self.scroll_offset {
@@ -2235,5 +2280,49 @@ mod tests {
         assert_eq!(ta.err(), Some("Required"));
         send_key(&mut ta, KeyCode::Char('b'), KeyModifiers::NONE);
         assert!(ta.err().is_none());
+    }
+
+    #[test]
+    fn visual_height_single_line() {
+        let ta = TextArea::new()
+            .with_single_line(true)
+            .with_content("hello");
+        assert_eq!(ta.visual_height(80), 1);
+    }
+
+    #[test]
+    fn visual_height_multiline() {
+        let ta = TextArea::new().with_content("line1\nline2\nline3");
+        assert_eq!(ta.visual_height(80), 3);
+    }
+
+    #[test]
+    fn visual_height_with_wrapping() {
+        let ta = TextArea::new()
+            .with_soft_wrap(true)
+            .with_content("abcdefghij"); // 10 chars
+        // At width 5, wraps to 2 visual lines
+        assert_eq!(ta.visual_height(5), 2);
+    }
+
+    #[test]
+    fn visual_height_capped_by_max_visible_lines() {
+        let ta = TextArea::new()
+            .with_content("a\nb\nc\nd\ne")
+            .with_max_visible_lines(3);
+        assert_eq!(ta.visual_height(80), 3);
+    }
+
+    #[test]
+    fn max_visible_lines_scrolls_internally() {
+        let mut ta = TextArea::new()
+            .with_content("a\nb\nc\nd\ne")
+            .with_max_visible_lines(3);
+        ta.focus();
+        // Move cursor to last line
+        for _ in 0..4 {
+            send_key(&mut ta, KeyCode::Down, KeyModifiers::NONE);
+        }
+        assert_eq!(ta.cursor_row(), 4);
     }
 }
