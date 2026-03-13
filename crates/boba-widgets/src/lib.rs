@@ -44,7 +44,7 @@
 //! | [`overlay`] | Overlay positioning and rendering utilities |
 //! | [`runeutil`] | Unicode-aware string width and truncation utilities |
 //! | [`selection`] | [`SelectionState`](selection::SelectionState) for shared list navigation |
-//! | [`text_edit`] | [`TextEditState`](text_edit::TextEditState) for shared single-line text editing |
+//! | [`text_edit`] | **Deprecated** – [`TextEditState`](text_edit::TextEditState) for shared single-line text editing; use [`TextArea`](text_area::TextArea) with `.with_single_line(true)` instead |
 
 pub mod chrome;
 #[cfg(feature = "syntax-highlighting")]
