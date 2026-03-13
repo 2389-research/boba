@@ -144,6 +144,7 @@ impl Search {
     /// the parent to call `set_matches()`.
     pub fn set_content(&mut self, content: Vec<String>) {
         self.content = Some(content);
+        self.update_matches_from_content();
     }
 
     /// Whether the search bar is currently active/visible.
@@ -622,6 +623,20 @@ mod tests {
         // Backspace to empty
         search.update(Message::KeyPress(key(KeyCode::Backspace)));
         assert_eq!(search.match_count(), 0);
+    }
+
+    #[test]
+    fn set_content_rematches_active_query() {
+        let mut search = Search::new();
+        search.set_content(vec!["apple".to_string(), "banana".to_string()]);
+        search.activate();
+        search.update(Message::KeyPress(key(KeyCode::Char('a'))));
+        assert_eq!(search.match_count(), 2);
+
+        // Update content while query is active — should re-match immediately
+        search.set_content(vec!["apple".to_string(), "cherry".to_string()]);
+        assert_eq!(search.match_count(), 1);
+        assert_eq!(search.matches(), &[0]);
     }
 
     #[test]
