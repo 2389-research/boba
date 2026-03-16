@@ -588,7 +588,7 @@ impl TextArea {
                     if len == 0 {
                         1
                     } else {
-                        ((len + w - 1) / w) as u16
+                        len.div_ceil(w) as u16
                     }
                 })
                 .sum()

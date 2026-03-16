@@ -445,7 +445,7 @@ impl Viewport {
                     if w == 0 {
                         1
                     } else {
-                        (w + width - 1) / width
+                        w.div_ceil(width)
                     }
                 })
                 .sum()
@@ -457,7 +457,7 @@ impl Viewport {
                     if w == 0 {
                         1
                     } else {
-                        (w + width - 1) / width
+                        w.div_ceil(width)
                     }
                 })
                 .sum()
