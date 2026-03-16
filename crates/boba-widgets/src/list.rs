@@ -384,6 +384,9 @@ impl<I: Item> List<I> {
     /// `selected_items()` returns all toggled indices.
     pub fn with_multi_select(mut self, enabled: bool) -> Self {
         self.multi_select = enabled;
+        if !enabled {
+            self.selected_set.clear();
+        }
         self
     }
 
@@ -444,13 +447,28 @@ impl<I: Item> List<I> {
             self.state.select(None);
             return;
         }
-        // Find the position of `index` in filtered_indices
-        if let Some(pos) = self.filtered_indices.iter().position(|&i| i == index) {
-            self.selection.select(pos);
-        } else {
-            // If not found in filtered view, select the closest or last
-            let clamped = index.min(self.filtered_indices.len() - 1);
-            self.selection.select(clamped);
+        // filtered_indices is always sorted (built by enumerate), so we
+        // can binary_search. On miss, the insertion point gives us the
+        // nearest visible item.
+        match self.filtered_indices.binary_search(&index) {
+            Ok(pos) => self.selection.select(pos),
+            Err(insert_pos) => {
+                let pos = if insert_pos >= self.filtered_indices.len() {
+                    self.filtered_indices.len() - 1
+                } else if insert_pos == 0 {
+                    0
+                } else {
+                    // Pick the closer neighbor
+                    let before = self.filtered_indices[insert_pos - 1];
+                    let after = self.filtered_indices[insert_pos];
+                    if index - before <= after - index {
+                        insert_pos - 1
+                    } else {
+                        insert_pos
+                    }
+                };
+                self.selection.select(pos);
+            }
         }
         self.sync_list_state();
     }
@@ -529,22 +547,34 @@ impl<I: Item> List<I> {
     // --- Item manipulation ---
 
     /// Insert an item at the given index, rebuilding the filter.
+    /// Selected indices at or above the insertion point are shifted up by one.
     pub fn insert_item(&mut self, index: usize, item: I) {
         let index = index.min(self.items.len());
         self.items.insert(index, item);
-        self.selected_set.clear();
+        self.selected_set = self
+            .selected_set
+            .iter()
+            .map(|&i| if i >= index { i + 1 } else { i })
+            .collect();
         self.rebuild_filtered_indices();
         self.selection.set_count(self.filtered_indices.len());
         self.sync_list_state();
     }
 
     /// Remove and return the item at the given index, if it exists.
+    /// The removed index is dropped from the selected set and indices above
+    /// it are shifted down by one.
     pub fn remove_item(&mut self, index: usize) -> Option<I> {
         if index >= self.items.len() {
             return None;
         }
         let removed = self.items.remove(index);
-        self.selected_set.clear();
+        self.selected_set = self
+            .selected_set
+            .iter()
+            .filter(|&&i| i != index)
+            .map(|&i| if i > index { i - 1 } else { i })
+            .collect();
         self.rebuild_filtered_indices();
         self.selection.set_count(self.filtered_indices.len());
         self.sync_list_state();
@@ -552,10 +582,11 @@ impl<I: Item> List<I> {
     }
 
     /// Replace the item at the given index, rebuilding the filter.
+    /// The replaced index remains in the selected set (the identity of
+    /// the slot is preserved even though its content changed).
     pub fn set_item(&mut self, index: usize, item: I) {
         if index < self.items.len() {
             self.items[index] = item;
-            self.selected_set.clear();
             self.rebuild_filtered_indices();
             self.selection.set_count(self.filtered_indices.len());
             self.sync_list_state();
@@ -1026,25 +1057,48 @@ mod tests {
     }
 
     #[test]
-    fn insert_item_clears_selections() {
-        let mut list = List::new(vec!["a".to_string(), "b".to_string()])
+    fn insert_item_reindexes_selections() {
+        let mut list = List::new(vec!["a".to_string(), "b".to_string(), "c".to_string()])
             .with_multi_select(true);
         list.focus();
-        list.update(Message::KeyPress(key(KeyCode::Char(' '))));
-        assert_eq!(list.selected_items().len(), 1);
+        // Select items at original indices 0 and 2
+        list.update(Message::KeyPress(key(KeyCode::Char(' ')))); // toggle 0
+        list.update(Message::KeyPress(key(KeyCode::Down)));
+        list.update(Message::KeyPress(key(KeyCode::Down)));
+        list.update(Message::KeyPress(key(KeyCode::Char(' ')))); // toggle 2
+        assert_eq!(list.selected_items(), &BTreeSet::from([0, 2]));
 
+        // Insert at index 1 — index 0 stays, index 2 shifts to 3
         list.insert_item(1, "x".to_string());
-        assert!(list.selected_items().is_empty());
+        assert_eq!(list.selected_items(), &BTreeSet::from([0, 3]));
     }
 
     #[test]
-    fn remove_item_clears_selections() {
-        let mut list = List::new(vec!["a".to_string(), "b".to_string()])
+    fn remove_item_reindexes_selections() {
+        let mut list = List::new(vec!["a".to_string(), "b".to_string(), "c".to_string()])
             .with_multi_select(true);
         list.focus();
-        list.update(Message::KeyPress(key(KeyCode::Char(' '))));
-        assert_eq!(list.selected_items().len(), 1);
+        // Select items at original indices 0 and 2
+        list.update(Message::KeyPress(key(KeyCode::Char(' ')))); // toggle 0
+        list.update(Message::KeyPress(key(KeyCode::Down)));
+        list.update(Message::KeyPress(key(KeyCode::Down)));
+        list.update(Message::KeyPress(key(KeyCode::Char(' ')))); // toggle 2
+        assert_eq!(list.selected_items(), &BTreeSet::from([0, 2]));
 
+        // Remove index 1 — index 0 stays, index 2 shifts to 1
+        list.remove_item(1);
+        assert_eq!(list.selected_items(), &BTreeSet::from([0, 1]));
+    }
+
+    #[test]
+    fn remove_item_drops_removed_index_from_selections() {
+        let mut list = List::new(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+            .with_multi_select(true);
+        list.focus();
+        list.update(Message::KeyPress(key(KeyCode::Char(' ')))); // toggle 0
+        assert_eq!(list.selected_items(), &BTreeSet::from([0]));
+
+        // Remove the selected item itself
         list.remove_item(0);
         assert!(list.selected_items().is_empty());
     }

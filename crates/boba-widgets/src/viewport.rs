@@ -588,11 +588,13 @@ impl Component for Viewport {
                 area
             };
             // Apply padding inside the block/area boundary.
+            let pad_w = self.padding.left.saturating_add(self.padding.right);
+            let pad_h = self.padding.top.saturating_add(self.padding.bottom);
             Rect {
                 x: r.x.saturating_add(self.padding.left),
                 y: r.y.saturating_add(self.padding.top),
-                width: r.width.saturating_sub(self.padding.left + self.padding.right),
-                height: r.height.saturating_sub(self.padding.top + self.padding.bottom),
+                width: r.width.saturating_sub(pad_w),
+                height: r.height.saturating_sub(pad_h),
             }
         };
 
