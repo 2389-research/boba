@@ -1,3 +1,6 @@
+// ABOUTME: Unified text editor widget supporting both single-line and multi-line modes.
+// ABOUTME: Features: line numbers, selection, undo/redo, submit bindings, autocomplete, validation, echo modes.
+
 //! Multi-line text editor component with line numbers, text selection,
 //! undo/redo, word case operations, clipboard integration, and soft wrapping.
 
@@ -12,6 +15,37 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Wrap};
 use ratatui::Frame;
 
+/// Validation callback type for input validation.
+type ValidateFn = Box<dyn Fn(&str) -> Result<(), String> + Send>;
+
+/// Controls which key combination triggers a submit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SubmitBinding {
+    /// Enter key submits.
+    Enter,
+    /// Shift+Enter submits.
+    ShiftEnter,
+    /// Ctrl+Enter submits.
+    CtrlEnter,
+    /// No submit key; all Enter variants insert newlines.
+    #[default]
+    None,
+}
+
+/// Controls how input text is displayed.
+///
+/// Only meaningful in single-line mode.
+#[derive(Debug, Clone, Default)]
+pub enum EchoMode {
+    /// Display characters as typed.
+    #[default]
+    Normal,
+    /// Display each character as the given mask character.
+    Password(char),
+    /// Display nothing.
+    Hidden,
+}
+
 /// Messages for the text area component.
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -25,6 +59,8 @@ pub enum Message {
     Copy(String),
     /// Emitted with selected text on Ctrl+X.
     Cut(String),
+    /// Emitted when the user triggers the submit binding.
+    Submit(String),
 }
 
 type UndoEntry = (Vec<Vec<char>>, (usize, usize));
@@ -63,6 +99,21 @@ pub struct TextArea {
     line_prompt: Option<String>,
     history: Option<boba_core::input_history::InputHistory>,
     block: Option<Block<'static>>,
+    single_line: bool,
+    submit_binding: SubmitBinding,
+    /// Horizontal scroll offset for single-line mode.
+    h_offset: usize,
+    placeholder: String,
+    echo_mode: EchoMode,
+    suggestions: Vec<String>,
+    filtered_suggestions: Vec<String>,
+    show_suggestions: bool,
+    suggestion_index: usize,
+    validate: Option<ValidateFn>,
+    err: Option<String>,
+    /// When set, caps the visible height used for rendering and scroll
+    /// calculations. `visual_height()` also respects this limit.
+    max_visible_lines: Option<u16>,
 }
 
 /// Style configuration for the text area.
@@ -76,6 +127,12 @@ pub struct TextAreaStyle {
     pub line_number: Style,
     /// Style applied to selected (highlighted) text.
     pub selection: Style,
+    /// Style applied to the per-line prompt string.
+    pub prompt: Style,
+    /// Style applied to placeholder text shown when empty and unfocused.
+    pub placeholder: Style,
+    /// Style applied to ghost text from autocomplete suggestions.
+    pub suggestion: Style,
 }
 
 impl Default for TextAreaStyle {
@@ -85,6 +142,9 @@ impl Default for TextAreaStyle {
             cursor: Style::default().add_modifier(Modifier::REVERSED),
             line_number: Style::default().fg(Color::DarkGray),
             selection: Style::default().bg(Color::DarkGray),
+            prompt: Style::default().fg(Color::Cyan),
+            placeholder: Style::default().fg(Color::DarkGray),
+            suggestion: Style::default().fg(Color::DarkGray),
         }
     }
 }
@@ -108,6 +168,18 @@ impl TextArea {
             line_prompt: None,
             history: None,
             block: None,
+            single_line: false,
+            submit_binding: SubmitBinding::None,
+            h_offset: 0,
+            placeholder: String::new(),
+            echo_mode: EchoMode::Normal,
+            suggestions: Vec::new(),
+            filtered_suggestions: Vec::new(),
+            show_suggestions: true,
+            suggestion_index: 0,
+            validate: None,
+            err: None,
+            max_visible_lines: None,
         }
     }
 
@@ -154,6 +226,20 @@ impl TextArea {
         self
     }
 
+    /// Set the prompt string displayed before each line of content.
+    ///
+    /// This is an alias for `with_line_prompt` that provides a shorter name.
+    pub fn with_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.line_prompt = Some(prompt.into());
+        self
+    }
+
+    /// Set placeholder text displayed when the editor is empty and unfocused.
+    pub fn with_placeholder(mut self, text: impl Into<String>) -> Self {
+        self.placeholder = text.into();
+        self
+    }
+
     /// Enable input history with the given maximum number of entries.
     ///
     /// When enabled and the buffer is a single line, Up/Down keys browse
@@ -168,6 +254,153 @@ impl TextArea {
     pub fn with_block(mut self, block: Block<'static>) -> Self {
         self.block = Some(block);
         self
+    }
+
+    /// Enable single-line mode.
+    ///
+    /// In single-line mode, Enter submits (unless overridden), pasted text
+    /// has newlines stripped, and Up/Down always browse history.
+    ///
+    /// When enabling single-line mode, the submit binding is automatically
+    /// set to `Enter` if it was `None`. Use `with_submit()` to override.
+    pub fn with_single_line(mut self, single_line: bool) -> Self {
+        self.single_line = single_line;
+        if single_line && self.submit_binding == SubmitBinding::None {
+            self.submit_binding = SubmitBinding::Enter;
+        }
+        self
+    }
+
+    /// Set the key binding that triggers a submit.
+    ///
+    /// Works in both single-line and multi-line modes. When a submit
+    /// binding is active, the non-submit Enter variants insert newlines.
+    pub fn with_submit(mut self, binding: SubmitBinding) -> Self {
+        self.submit_binding = binding;
+        self
+    }
+
+    /// Set the echo mode for displaying input text.
+    ///
+    /// Only meaningful in single-line mode. In `Password` mode, each character
+    /// is replaced with the given mask character. In `Hidden` mode, nothing is
+    /// rendered.
+    pub fn with_echo_mode(mut self, mode: EchoMode) -> Self {
+        self.echo_mode = mode;
+        self
+    }
+
+    /// Return the current echo mode.
+    pub fn echo_mode(&self) -> &EchoMode {
+        &self.echo_mode
+    }
+
+    /// Set the list of autocomplete suggestions.
+    ///
+    /// Suggestions are only active in single-line mode. After setting,
+    /// the list is immediately filtered against the current input value.
+    pub fn set_suggestions(&mut self, suggestions: Vec<String>) {
+        self.suggestions = suggestions;
+        self.filter_suggestions();
+    }
+
+    /// Builder method to set autocomplete suggestions.
+    ///
+    /// Suggestions are only active in single-line mode.
+    pub fn with_suggestions(mut self, suggestions: Vec<String>) -> Self {
+        self.suggestions = suggestions;
+        self.filter_suggestions();
+        self
+    }
+
+    /// Return the currently highlighted suggestion, if any.
+    ///
+    /// Returns `None` when not in single-line mode or when suggestions
+    /// are hidden.
+    pub fn current_suggestion(&self) -> Option<&str> {
+        if !self.single_line || !self.show_suggestions {
+            return None;
+        }
+        self.filtered_suggestions
+            .get(self.suggestion_index)
+            .map(|s| s.as_str())
+    }
+
+    /// Return the filtered suggestions that match the current input.
+    pub fn available_suggestions(&self) -> &[String] {
+        &self.filtered_suggestions
+    }
+
+    /// Show or hide autocomplete suggestions.
+    pub fn show_suggestions(&mut self, show: bool) {
+        self.show_suggestions = show;
+    }
+
+    /// Attach a validation function that runs after every content change.
+    ///
+    /// The validator receives the current value and should return `Ok(())`
+    /// when valid or `Err(message)` with a human-readable error string.
+    pub fn with_validate(
+        mut self,
+        f: impl Fn(&str) -> Result<(), String> + Send + 'static,
+    ) -> Self {
+        self.validate = Some(Box::new(f));
+        self
+    }
+
+    /// Cap the visible height of the widget to at most `n` lines.
+    ///
+    /// When set, scroll calculations and `visual_height()` will not
+    /// exceed this value. Has no effect in single-line mode.
+    pub fn with_max_visible_lines(mut self, n: u16) -> Self {
+        self.max_visible_lines = Some(n);
+        self
+    }
+
+    /// Return the current validation error, if any.
+    pub fn err(&self) -> Option<&str> {
+        self.err.as_deref()
+    }
+
+    /// Filter the suggestion list against the current input value.
+    ///
+    /// Keeps only suggestions that start with the current value
+    /// (case-insensitive) and are not an exact match. Resets the
+    /// suggestion index to 0.
+    fn filter_suggestions(&mut self) {
+        let val = self.value().to_lowercase();
+        self.filtered_suggestions = self
+            .suggestions
+            .iter()
+            .filter(|s| {
+                let sl = s.to_lowercase();
+                sl.starts_with(&val) && sl != val
+            })
+            .cloned()
+            .collect();
+        self.suggestion_index = 0;
+    }
+
+    /// Run the validation function against the current value, updating `err`.
+    fn run_validate(&mut self) {
+        if let Some(ref f) = self.validate {
+            self.err = f(&self.value()).err();
+        }
+    }
+
+    /// Accept the current suggestion, replacing the input content.
+    ///
+    /// Returns true if a suggestion was accepted.
+    fn accept_suggestion(&mut self) -> bool {
+        if let Some(suggestion) = self.current_suggestion().map(|s| s.to_owned()) {
+            self.lines = vec![suggestion.chars().collect()];
+            self.cursor_col = self.lines[0].len();
+            self.cursor_row = 0;
+            self.filter_suggestions();
+            true
+        } else {
+            false
+        }
     }
 
     /// Push a value into the input history.
@@ -281,6 +514,108 @@ impl TextArea {
     /// Return the current cursor column.
     pub fn cursor_col(&self) -> usize {
         self.cursor_col
+    }
+
+    /// Whether the content is empty.
+    pub fn is_empty(&self) -> bool {
+        self.lines.len() == 1 && self.lines[0].is_empty()
+    }
+
+    /// Total character count including newlines.
+    pub fn len(&self) -> usize {
+        let newlines = self.lines.len().saturating_sub(1);
+        let chars: usize = self.lines.iter().map(|l| l.len()).sum();
+        chars + newlines
+    }
+
+    /// Flat character index of the cursor position.
+    ///
+    /// Counts characters from the start of content, including newlines.
+    pub fn cursor_position(&self) -> usize {
+        let mut pos = 0;
+        for row in 0..self.cursor_row {
+            pos += self.lines[row].len() + 1; // +1 for newline
+        }
+        pos + self.cursor_col
+    }
+
+    /// Set cursor by flat character index.
+    ///
+    /// Converts a flat index to (row, col) position. Clamps to the end
+    /// of content if the index is past the last character.
+    pub fn set_cursor(&mut self, pos: usize) {
+        let mut remaining = pos;
+        for (row, line) in self.lines.iter().enumerate() {
+            if remaining <= line.len() {
+                self.cursor_row = row;
+                self.cursor_col = remaining;
+                return;
+            }
+            remaining = remaining.saturating_sub(line.len() + 1);
+        }
+        // Past end — clamp to last position
+        self.cursor_row = self.lines.len() - 1;
+        self.cursor_col = self.lines[self.cursor_row].len();
+    }
+
+    /// Reset content, cursor, selection, and undo/redo stacks.
+    pub fn reset(&mut self) {
+        self.lines = vec![Vec::new()];
+        self.cursor_row = 0;
+        self.cursor_col = 0;
+        self.scroll_offset = 0;
+        self.h_offset = 0;
+        self.selection_start = None;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+    }
+
+    /// Return the current horizontal scroll offset (single-line mode).
+    pub fn h_offset(&self) -> usize {
+        self.h_offset
+    }
+
+    /// Returns the visual height this widget would occupy at the given width.
+    ///
+    /// Accounts for soft wrapping and max_visible_lines if set. In single-line
+    /// mode, always returns 1.
+    pub fn visual_height(&self, width: u16) -> u16 {
+        let raw = if self.single_line {
+            1
+        } else if self.soft_wrap && width > 0 {
+            let w = width as usize;
+            self.lines
+                .iter()
+                .map(|line| {
+                    let len = line.len();
+                    if len == 0 {
+                        1
+                    } else {
+                        len.div_ceil(w) as u16
+                    }
+                })
+                .sum()
+        } else {
+            self.lines.len() as u16
+        };
+        match self.max_visible_lines {
+            Some(max) => raw.min(max),
+            None => raw,
+        }
+    }
+
+    /// Update the horizontal offset so the cursor stays visible within
+    /// the given available width. Called internally during `view()` and
+    /// exposed for testing.
+    pub fn update_h_offset(&mut self, available_width: usize) {
+        if available_width == 0 {
+            return;
+        }
+        if self.cursor_col < self.h_offset {
+            self.h_offset = self.cursor_col;
+        } else if self.cursor_col >= self.h_offset + available_width {
+            self.h_offset = self.cursor_col.saturating_sub(available_width) + 1;
+        }
     }
 
     /// Return whether there is an active selection.
@@ -488,17 +823,31 @@ impl TextArea {
         }
     }
 
-    /// Delete the word after the cursor.
+    /// Delete the word after the cursor using emacs/readline-style word
+    /// boundaries: skip non-alphanumeric characters, then delete alphanumeric
+    /// characters.
     fn delete_word_forward(&mut self) {
-        let boundary = self.next_word_boundary();
-        if boundary > self.cursor_col {
-            self.lines[self.cursor_row].drain(self.cursor_col..boundary);
-        } else if self.cursor_col >= self.current_line_len()
-            && self.cursor_row < self.lines.len() - 1
-        {
-            // At the end of a line, join with the next line
-            let next = self.lines.remove(self.cursor_row + 1);
-            self.lines[self.cursor_row].extend(next);
+        let line = &self.lines[self.cursor_row];
+        let len = line.len();
+        if self.cursor_col >= len {
+            if self.cursor_row < self.lines.len() - 1 {
+                // At end of line, join with next line
+                let next = self.lines.remove(self.cursor_row + 1);
+                self.lines[self.cursor_row].extend(next);
+            }
+            return;
+        }
+        let mut end = self.cursor_col;
+        // Skip non-alphanumeric characters
+        while end < len && !self.lines[self.cursor_row][end].is_alphanumeric() {
+            end += 1;
+        }
+        // Delete alphanumeric characters
+        while end < len && self.lines[self.cursor_row][end].is_alphanumeric() {
+            end += 1;
+        }
+        if end > self.cursor_col {
+            self.lines[self.cursor_row].drain(self.cursor_col..end);
         }
     }
 
@@ -589,6 +938,145 @@ impl TextArea {
             false
         }
     }
+
+    /// Render the text area in single-line mode with horizontal scrolling
+    /// and overflow indicators.
+    fn view_single_line(&self, frame: &mut Frame, inner: Rect) {
+        let prompt_width = self.line_prompt.as_ref().map(|p| p.len()).unwrap_or(0);
+        let total_width = inner.width as usize;
+        let available = total_width.saturating_sub(prompt_width);
+
+        if available == 0 {
+            return;
+        }
+
+        // Hidden echo mode: render prompt only (no content, no cursor).
+        if matches!(self.echo_mode, EchoMode::Hidden) {
+            let mut spans = Vec::new();
+            if let Some(ref prompt) = self.line_prompt {
+                spans.push(Span::styled(prompt.clone(), self.style.prompt));
+            }
+            let paragraph = Paragraph::new(Line::from(spans));
+            frame.render_widget(paragraph, inner);
+            return;
+        }
+
+        // Compute horizontal offset so cursor stays visible (same logic
+        // as update_h_offset but without mutating self).
+        let h_off = if self.cursor_col < self.h_offset {
+            self.cursor_col
+        } else if self.cursor_col >= self.h_offset + available {
+            self.cursor_col.saturating_sub(available) + 1
+        } else {
+            self.h_offset
+        };
+
+        // For Password echo mode, replace each character with the mask.
+        let masked;
+        let line_chars = match self.echo_mode {
+            EchoMode::Password(mask) => {
+                masked = vec![mask; self.lines[0].len()];
+                &masked
+            }
+            _ => &self.lines[0],
+        };
+        let line_len = line_chars.len();
+
+        // Determine if overflow indicators are needed
+        let has_left_overflow = h_off > 0;
+        let has_right_overflow = h_off + available < line_len;
+
+        // Slice the visible window from line content
+        let visible_end = (h_off + available).min(line_len);
+        let mut visible: Vec<char> = line_chars[h_off..visible_end].to_vec();
+
+        // Pad with spaces if content is shorter than available width
+        while visible.len() < available {
+            visible.push(' ');
+        }
+
+        // Replace edge characters with overflow indicators
+        if has_left_overflow && !visible.is_empty() {
+            visible[0] = '\u{2026}'; // …
+        }
+        if has_right_overflow && !visible.is_empty() {
+            let last = visible.len() - 1;
+            visible[last] = '\u{2026}'; // …
+        }
+
+        let mut spans = Vec::new();
+
+        if let Some(ref prompt) = self.line_prompt {
+            spans.push(Span::styled(prompt.clone(), self.style.prompt));
+        }
+
+        // Show placeholder text when empty and unfocused
+        let is_empty = line_len == 0;
+        if is_empty && !self.focus && !self.placeholder.is_empty() {
+            spans.push(Span::styled(
+                self.placeholder.clone(),
+                self.style.placeholder,
+            ));
+            let paragraph = Paragraph::new(Line::from(spans));
+            frame.render_widget(paragraph, inner);
+            return;
+        }
+
+        // Compute ghost text from the current suggestion (remaining part only).
+        let ghost_text: Option<String> = if self.show_suggestions {
+            if let Some(suggestion) = self.current_suggestion() {
+                let current_val = self.value();
+                if suggestion.len() > current_val.len() {
+                    Some(suggestion[current_val.len()..].to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Render the visible slice with cursor highlighting
+        if self.focus {
+            let cursor_in_visible = self.cursor_col.saturating_sub(h_off);
+            let before: String = visible[..cursor_in_visible].iter().collect();
+            let cursor_char = visible.get(cursor_in_visible);
+            let after_start = cursor_in_visible + 1;
+            let after: String = if after_start < visible.len() {
+                visible[after_start..].iter().collect()
+            } else {
+                String::new()
+            };
+
+            if !before.is_empty() {
+                spans.push(Span::styled(before, self.style.text));
+            }
+            if let Some(&c) = cursor_char {
+                // If the character is a padding space at the end of content,
+                // render it as a cursor block.
+                spans.push(Span::styled(c.to_string(), self.style.cursor));
+            } else {
+                spans.push(Span::styled(" ", self.style.cursor));
+            }
+            if !after.is_empty() {
+                spans.push(Span::styled(after, self.style.text));
+            }
+            // Show ghost text after the cursor when cursor is at end of content.
+            if let Some(ref ghost) = ghost_text {
+                if self.cursor_col >= line_len {
+                    spans.push(Span::styled(ghost.clone(), self.style.suggestion));
+                }
+            }
+        } else {
+            let text: String = visible.iter().collect();
+            spans.push(Span::styled(text, self.style.text));
+        }
+
+        let paragraph = Paragraph::new(Line::from(spans));
+        frame.render_widget(paragraph, inner);
+    }
 }
 
 impl Default for TextArea {
@@ -603,6 +1091,12 @@ impl Component for TextArea {
     fn update(&mut self, msg: Message) -> Command<Message> {
         match msg {
             Message::Paste(text) if self.focus => {
+                // In single-line mode, strip newlines from pasted text.
+                let text = if self.single_line {
+                    text.replace(['\n', '\r'], "")
+                } else {
+                    text
+                };
                 self.push_undo();
                 self.delete_selection();
                 if let Some(limit) = self.char_limit {
@@ -613,6 +1107,10 @@ impl Component for TextArea {
                 } else {
                     self.insert_string(&text);
                 }
+                if self.single_line {
+                    self.filter_suggestions();
+                }
+                self.run_validate();
                 Command::message(Message::Changed(self.value()))
             }
             Message::KeyPress(key) if self.focus => {
@@ -629,6 +1127,10 @@ impl Component for TextArea {
                             self.cursor_row = row;
                             self.cursor_col = col;
                             self.selection_start = None;
+                            if self.single_line {
+                                self.filter_suggestions();
+                            }
+                            self.run_validate();
                             Command::message(Message::Changed(self.value()))
                         } else {
                             Command::none()
@@ -645,6 +1147,10 @@ impl Component for TextArea {
                             self.cursor_row = row;
                             self.cursor_col = col;
                             self.selection_start = None;
+                            if self.single_line {
+                                self.filter_suggestions();
+                            }
+                            self.run_validate();
                             Command::message(Message::Changed(self.value()))
                         } else {
                             Command::none()
@@ -663,6 +1169,10 @@ impl Component for TextArea {
                         if let Some(text) = self.selected_text() {
                             self.push_undo();
                             self.delete_selection();
+                            if self.single_line {
+                                self.filter_suggestions();
+                            }
+                            self.run_validate();
                             Command::batch([
                                 Command::message(Message::Cut(text)),
                                 Command::message(Message::Changed(self.value())),
@@ -681,6 +1191,10 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.kill_to_end_of_line();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Ctrl+U: kill to start of line
@@ -688,6 +1202,10 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.kill_to_start_of_line();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Ctrl+W / Alt+Backspace: delete word backward
@@ -695,12 +1213,20 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.delete_word_backward();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Backspace, KeyModifiers::ALT) => {
                         self.push_undo();
                         self.clear_selection();
                         self.delete_word_backward();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Alt+D: delete word forward
@@ -708,6 +1234,10 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.delete_word_forward();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Alt+U: uppercase word at cursor
@@ -715,6 +1245,10 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.uppercase_word();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Alt+L: lowercase word at cursor
@@ -722,6 +1256,10 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.lowercase_word();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Alt+C: capitalize word at cursor
@@ -729,6 +1267,10 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.capitalize_word();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Ctrl+Delete: delete word forward
@@ -736,6 +1278,10 @@ impl Component for TextArea {
                         self.push_undo();
                         self.clear_selection();
                         self.delete_word_forward();
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     // Ctrl+Left / Alt+Left: move to previous word boundary
@@ -803,20 +1349,30 @@ impl Component for TextArea {
                         self.cursor_col = self.current_line_len();
                         Command::none()
                     }
-                    // Tab: insert 4 spaces
+                    // Tab: accept suggestion in single-line mode, otherwise insert 4 spaces
                     (KeyCode::Tab, _) => {
-                        self.push_undo();
-                        self.delete_selection();
-                        for _ in 0..4 {
-                            if let Some(limit) = self.char_limit {
-                                if self.total_chars() >= limit {
-                                    break;
-                                }
+                        if self.single_line {
+                            if self.accept_suggestion() {
+                                self.run_validate();
+                                Command::message(Message::Changed(self.value()))
+                            } else {
+                                Command::none()
                             }
-                            self.lines[self.cursor_row].insert(self.cursor_col, ' ');
-                            self.cursor_col += 1;
+                        } else {
+                            self.push_undo();
+                            self.delete_selection();
+                            for _ in 0..4 {
+                                if let Some(limit) = self.char_limit {
+                                    if self.total_chars() >= limit {
+                                        break;
+                                    }
+                                }
+                                self.lines[self.cursor_row].insert(self.cursor_col, ' ');
+                                self.cursor_col += 1;
+                            }
+                            self.run_validate();
+                            Command::message(Message::Changed(self.value()))
                         }
-                        Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                         self.push_undo();
@@ -828,22 +1384,41 @@ impl Component for TextArea {
                         }
                         self.lines[self.cursor_row].insert(self.cursor_col, c);
                         self.cursor_col += 1;
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
-                    (KeyCode::Enter, _) => {
+                    (KeyCode::Enter, m) => {
+                        let is_submit = match self.submit_binding {
+                            SubmitBinding::Enter => {
+                                !m.contains(KeyModifiers::SHIFT)
+                                    && !m.contains(KeyModifiers::CONTROL)
+                            }
+                            SubmitBinding::ShiftEnter => m.contains(KeyModifiers::SHIFT),
+                            SubmitBinding::CtrlEnter => m.contains(KeyModifiers::CONTROL),
+                            SubmitBinding::None => false,
+                        };
+                        if is_submit {
+                            return Command::message(Message::Submit(self.value()));
+                        }
+                        if self.single_line {
+                            return Command::none();
+                        }
                         self.push_undo();
                         self.delete_selection();
                         let rest = self.lines[self.cursor_row].split_off(self.cursor_col);
                         self.cursor_row += 1;
                         self.cursor_col = 0;
                         self.lines.insert(self.cursor_row, rest);
+                        self.run_validate();
                         Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Backspace, _) => {
                         if self.has_selection() {
                             self.push_undo();
                             self.delete_selection();
-                            Command::message(Message::Changed(self.value()))
                         } else {
                             self.clear_selection();
                             if self.cursor_col > 0 {
@@ -859,14 +1434,17 @@ impl Component for TextArea {
                             } else {
                                 return Command::none();
                             }
-                            Command::message(Message::Changed(self.value()))
                         }
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        self.run_validate();
+                        Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Delete, _) => {
                         if self.has_selection() {
                             self.push_undo();
                             self.delete_selection();
-                            Command::message(Message::Changed(self.value()))
                         } else {
                             self.clear_selection();
                             if self.cursor_col < self.current_line_len() {
@@ -879,8 +1457,12 @@ impl Component for TextArea {
                             } else {
                                 return Command::none();
                             }
-                            Command::message(Message::Changed(self.value()))
                         }
+                        if self.single_line {
+                            self.filter_suggestions();
+                        }
+                        self.run_validate();
+                        Command::message(Message::Changed(self.value()))
                     }
                     (KeyCode::Left, _) => {
                         self.clear_selection();
@@ -896,6 +1478,12 @@ impl Component for TextArea {
                         self.clear_selection();
                         if self.cursor_col < self.current_line_len() {
                             self.cursor_col += 1;
+                        } else if self.single_line
+                            && self.cursor_col >= self.current_line_len()
+                            && self.accept_suggestion()
+                        {
+                            self.run_validate();
+                            return Command::message(Message::Changed(self.value()));
                         } else if self.cursor_row < self.lines.len() - 1 {
                             self.cursor_row += 1;
                             self.cursor_col = 0;
@@ -903,10 +1491,10 @@ impl Component for TextArea {
                         Command::none()
                     }
                     (KeyCode::Up, _) if !shift => {
-                        // History browsing: when buffer is a single line and
-                        // cursor is on the first row, browse history instead
-                        // of moving the cursor.
-                        if self.lines.len() == 1 && self.cursor_row == 0 {
+                        // History browsing: in single-line mode always try
+                        // history; in multi-line mode only when the buffer
+                        // happens to be a single line.
+                        if self.single_line || (self.lines.len() == 1 && self.cursor_row == 0) {
                             let current = self.value();
                             let entry = self
                                 .history
@@ -918,6 +1506,7 @@ impl Component for TextArea {
                                 self.cursor_row = 0;
                                 self.cursor_col = self.lines[0].len();
                                 self.selection_start = None;
+                                self.run_validate();
                                 return Command::message(Message::Changed(self.value()));
                             }
                         }
@@ -929,15 +1518,17 @@ impl Component for TextArea {
                         Command::none()
                     }
                     (KeyCode::Down, _) if !shift => {
-                        // History browsing: when buffer is a single line and
-                        // cursor is on the last row, browse history instead.
-                        if self.lines.len() == 1 && self.cursor_row == 0 {
+                        // History browsing: in single-line mode always try
+                        // history; in multi-line mode only when the buffer
+                        // happens to be a single line.
+                        if self.single_line || (self.lines.len() == 1 && self.cursor_row == 0) {
                             if let Some(ref mut history) = self.history {
                                 if let Some(entry) = history.newer().map(|s| s.to_owned()) {
                                     self.lines = vec![entry.chars().collect()];
                                     self.cursor_row = 0;
                                     self.cursor_col = self.lines[0].len();
                                     self.selection_start = None;
+                                    self.run_validate();
                                     return Command::message(Message::Changed(self.value()));
                                 }
                             }
@@ -975,7 +1566,30 @@ impl Component for TextArea {
         } else {
             area
         };
-        let visible_height = inner.height as usize;
+
+        // Single-line mode uses a separate rendering path with horizontal
+        // scrolling and no line numbers or vertical scroll.
+        if self.single_line {
+            self.view_single_line(frame, inner);
+            return;
+        }
+
+        // Show placeholder text when empty and unfocused
+        let content_empty = self.lines.len() == 1 && self.lines[0].is_empty();
+        if content_empty && !self.focus && !self.placeholder.is_empty() {
+            let placeholder_line = Line::from(Span::styled(
+                self.placeholder.clone(),
+                self.style.placeholder,
+            ));
+            let paragraph = Paragraph::new(placeholder_line);
+            frame.render_widget(paragraph, inner);
+            return;
+        }
+
+        let visible_height = match self.max_visible_lines {
+            Some(max) => (inner.height as usize).min(max as usize),
+            None => inner.height as usize,
+        };
 
         // Adjust scroll to keep cursor visible
         let scroll = if self.cursor_row < self.scroll_offset {
@@ -1013,7 +1627,7 @@ impl Component for TextArea {
                 }
 
                 if let Some(ref prompt) = self.line_prompt {
-                    spans.push(Span::styled(prompt.clone(), self.style.text));
+                    spans.push(Span::styled(prompt.clone(), self.style.prompt));
                 }
 
                 if has_sel {
@@ -1438,7 +2052,8 @@ mod tests {
         ta.focus();
         ta.cursor_col = 0;
         send_key(&mut ta, KeyCode::Char('d'), KeyModifiers::ALT);
-        assert_eq!(ta.value(), "world");
+        // Emacs-style: skip non-alnum (none), delete alnum "hello" → " world"
+        assert_eq!(ta.value(), " world");
         send_key(&mut ta, KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(ta.value(), "hello world");
     }
@@ -1489,6 +2104,80 @@ mod tests {
     }
 
     #[test]
+    fn single_line_enter_submits() {
+        let mut ta = TextArea::new().with_single_line(true);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('h'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Char('i'), KeyModifiers::NONE);
+        let cmd = send_key(&mut ta, KeyCode::Enter, KeyModifiers::NONE);
+        match cmd.into_message() {
+            Some(Message::Submit(s)) => assert_eq!(s, "hi"),
+            other => panic!("Expected Submit(\"hi\"), got {:?}", other),
+        }
+        assert_eq!(ta.line_count(), 1);
+    }
+
+    #[test]
+    fn single_line_paste_strips_newlines() {
+        let mut ta = TextArea::new().with_single_line(true);
+        ta.focus();
+        ta.update(Message::Paste("hello\nworld\nfoo".into()));
+        assert_eq!(ta.value(), "helloworldfoo");
+        assert_eq!(ta.line_count(), 1);
+    }
+
+    #[test]
+    fn single_line_up_down_browse_history() {
+        let mut ta = TextArea::new().with_single_line(true).with_history(10);
+        ta.focus();
+        ta.push_history("first");
+        ta.push_history("second");
+        send_key(&mut ta, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "second");
+        send_key(&mut ta, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "first");
+        send_key(&mut ta, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "second");
+    }
+
+    #[test]
+    fn multiline_submit_with_ctrl_enter() {
+        let mut ta = TextArea::new().with_submit(SubmitBinding::CtrlEnter);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('h'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Char('i'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(ta.line_count(), 2);
+        let cmd = send_key(&mut ta, KeyCode::Enter, KeyModifiers::CONTROL);
+        match cmd.into_message() {
+            Some(Message::Submit(s)) => assert_eq!(s, "hi\n"),
+            other => panic!("Expected Submit, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn multiline_enter_submit_shift_enter_newline() {
+        let mut ta = TextArea::new().with_submit(SubmitBinding::Enter);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Enter, KeyModifiers::SHIFT);
+        assert_eq!(ta.line_count(), 2);
+        let cmd = send_key(&mut ta, KeyCode::Enter, KeyModifiers::NONE);
+        match cmd.into_message() {
+            Some(Message::Submit(_)) => {}
+            other => panic!("Expected Submit, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn multiline_no_submit_binding_all_enters_newline() {
+        let mut ta = TextArea::new();
+        ta.focus();
+        send_key(&mut ta, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(ta.line_count(), 2);
+    }
+
+    #[test]
     fn test_history_cursor_at_end_after_browse() {
         let mut ta = TextArea::new().with_history(100);
         ta.focus();
@@ -1498,5 +2187,266 @@ mod tests {
         assert_eq!(ta.value(), "hello world");
         assert_eq!(ta.cursor_col(), 11);
         assert_eq!(ta.cursor_row(), 0);
+    }
+
+    #[test]
+    fn single_line_h_offset_accessor() {
+        let ta = TextArea::new().with_single_line(true);
+        assert_eq!(ta.h_offset(), 0);
+    }
+
+    #[test]
+    fn single_line_h_offset_advances_with_cursor() {
+        let mut ta = TextArea::new().with_single_line(true);
+        ta.focus();
+        // Type enough characters to exceed a small visible width
+        for c in "abcdefghijklmnopqrstuvwxyz".chars() {
+            send_key(&mut ta, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        assert_eq!(ta.cursor_col(), 26);
+        // After updating h_offset with a small available width, offset should advance
+        ta.update_h_offset(10);
+        assert!(
+            ta.h_offset() > 0,
+            "h_offset should advance when cursor is past visible width"
+        );
+        // Cursor should be visible: h_offset <= cursor_col < h_offset + available
+        assert!(ta.cursor_col() >= ta.h_offset());
+        assert!(ta.cursor_col() < ta.h_offset() + 10);
+    }
+
+    #[test]
+    fn single_line_h_offset_tracks_back() {
+        let mut ta = TextArea::new().with_single_line(true);
+        ta.focus();
+        // Type enough characters to force scrolling
+        for c in "abcdefghijklmnopqrstuvwxyz".chars() {
+            send_key(&mut ta, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        ta.update_h_offset(10);
+        assert!(ta.h_offset() > 0);
+
+        // Move cursor back to the beginning
+        send_key(&mut ta, KeyCode::Home, KeyModifiers::NONE);
+        assert_eq!(ta.cursor_col(), 0);
+        ta.update_h_offset(10);
+        assert_eq!(
+            ta.h_offset(),
+            0,
+            "h_offset should track back to 0 when cursor is at start"
+        );
+    }
+
+    #[test]
+    fn placeholder_builder() {
+        let ta = TextArea::new().with_placeholder("Type here...");
+        assert_eq!(ta.value(), "");
+    }
+
+    #[test]
+    fn prompt_builder() {
+        let ta = TextArea::new().with_prompt("> ");
+        assert_eq!(ta.value(), "");
+    }
+
+    #[test]
+    fn echo_mode_password() {
+        let mut ta = TextArea::new()
+            .with_single_line(true)
+            .with_echo_mode(EchoMode::Password('*'));
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('s'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Char('e'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Char('c'), KeyModifiers::NONE);
+        assert_eq!(ta.value(), "sec");
+        assert!(matches!(ta.echo_mode(), EchoMode::Password('*')));
+    }
+
+    #[test]
+    fn echo_mode_hidden() {
+        let ta = TextArea::new()
+            .with_single_line(true)
+            .with_echo_mode(EchoMode::Hidden)
+            .with_content("secret");
+        assert_eq!(ta.value(), "secret");
+        assert!(matches!(ta.echo_mode(), EchoMode::Hidden));
+    }
+
+    #[test]
+    fn suggestions_filter_as_user_types() {
+        let mut ta = TextArea::new()
+            .with_single_line(true)
+            .with_suggestions(vec!["apple".into(), "banana".into(), "apricot".into()]);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        let avail = ta.available_suggestions();
+        assert_eq!(avail.len(), 2);
+        assert!(avail.contains(&"apple".to_string()));
+        assert!(avail.contains(&"apricot".to_string()));
+    }
+
+    #[test]
+    fn tab_accepts_suggestion() {
+        let mut ta = TextArea::new()
+            .with_single_line(true)
+            .with_suggestions(vec!["apple".into()]);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(ta.current_suggestion(), Some("apple"));
+        send_key(&mut ta, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "apple");
+    }
+
+    #[test]
+    fn suggestions_ignored_in_multiline() {
+        let mut ta = TextArea::new().with_suggestions(vec!["apple".into()]);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(ta.current_suggestion(), Option::<&str>::None);
+    }
+
+    #[test]
+    fn right_arrow_at_end_accepts_suggestion() {
+        let mut ta = TextArea::new()
+            .with_single_line(true)
+            .with_suggestions(vec!["apple".into()]);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(ta.current_suggestion(), Some("apple"));
+        send_key(&mut ta, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(ta.value(), "apple");
+    }
+
+    #[test]
+    fn exact_match_clears_suggestions() {
+        let mut ta = TextArea::new()
+            .with_single_line(true)
+            .with_suggestions(vec!["hi".into()]);
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('h'), KeyModifiers::NONE);
+        assert_eq!(ta.current_suggestion(), Some("hi"));
+        send_key(&mut ta, KeyCode::Char('i'), KeyModifiers::NONE);
+        assert_eq!(ta.current_suggestion(), None);
+    }
+
+    #[test]
+    fn validation_sets_error() {
+        let mut ta = TextArea::new().with_single_line(true).with_validate(|s| {
+            if s.len() > 3 {
+                Err("Too long".into())
+            } else {
+                Ok(())
+            }
+        });
+        ta.focus();
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        assert!(ta.err().is_none());
+        send_key(&mut ta, KeyCode::Char('b'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Char('c'), KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Char('d'), KeyModifiers::NONE);
+        assert_eq!(ta.err(), Some("Too long"));
+    }
+
+    #[test]
+    fn validation_clears_on_valid() {
+        let mut ta = TextArea::new().with_single_line(true).with_validate(|s| {
+            if s.is_empty() {
+                Err("Required".into())
+            } else {
+                Ok(())
+            }
+        });
+        ta.focus();
+        assert!(ta.err().is_none());
+        send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
+        assert!(ta.err().is_none());
+        send_key(&mut ta, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(ta.err(), Some("Required"));
+        send_key(&mut ta, KeyCode::Char('b'), KeyModifiers::NONE);
+        assert!(ta.err().is_none());
+    }
+
+    #[test]
+    fn visual_height_single_line() {
+        let ta = TextArea::new().with_single_line(true).with_content("hello");
+        assert_eq!(ta.visual_height(80), 1);
+    }
+
+    #[test]
+    fn visual_height_multiline() {
+        let ta = TextArea::new().with_content("line1\nline2\nline3");
+        assert_eq!(ta.visual_height(80), 3);
+    }
+
+    #[test]
+    fn visual_height_with_wrapping() {
+        let ta = TextArea::new()
+            .with_soft_wrap(true)
+            .with_content("abcdefghij"); // 10 chars
+                                         // At width 5, wraps to 2 visual lines
+        assert_eq!(ta.visual_height(5), 2);
+    }
+
+    #[test]
+    fn visual_height_capped_by_max_visible_lines() {
+        let ta = TextArea::new()
+            .with_content("a\nb\nc\nd\ne")
+            .with_max_visible_lines(3);
+        assert_eq!(ta.visual_height(80), 3);
+    }
+
+    #[test]
+    fn max_visible_lines_scrolls_internally() {
+        let mut ta = TextArea::new()
+            .with_content("a\nb\nc\nd\ne")
+            .with_max_visible_lines(3);
+        ta.focus();
+        // Move cursor to last line
+        for _ in 0..4 {
+            send_key(&mut ta, KeyCode::Down, KeyModifiers::NONE);
+        }
+        assert_eq!(ta.cursor_row(), 4);
+    }
+
+    #[test]
+    fn is_empty_and_len() {
+        let ta = TextArea::new();
+        assert!(ta.is_empty());
+        assert_eq!(ta.len(), 0);
+
+        let ta = TextArea::new().with_content("hello");
+        assert!(!ta.is_empty());
+        assert_eq!(ta.len(), 5);
+
+        let ta = TextArea::new().with_content("ab\ncd");
+        assert_eq!(ta.len(), 5); // 2 + 1 (newline) + 2
+    }
+
+    #[test]
+    fn cursor_position_flat_index() {
+        let mut ta = TextArea::new().with_content("ab\ncd");
+        ta.focus();
+        send_key(&mut ta, KeyCode::Down, KeyModifiers::NONE);
+        send_key(&mut ta, KeyCode::Right, KeyModifiers::NONE);
+        // Row 1, col 1 = flat index 4 (a=0, b=1, \n=2, c=3, d=4... col 1 = 4)
+        assert_eq!(ta.cursor_position(), 4);
+    }
+
+    #[test]
+    fn set_cursor_flat_index() {
+        let mut ta = TextArea::new().with_content("ab\ncd");
+        ta.set_cursor(4); // should be row 1, col 1 ("d")
+        assert_eq!(ta.cursor_row(), 1);
+        assert_eq!(ta.cursor_col(), 1);
+    }
+
+    #[test]
+    fn reset_clears_everything() {
+        let mut ta = TextArea::new().with_content("hello");
+        ta.focus();
+        ta.reset();
+        assert!(ta.is_empty());
+        assert_eq!(ta.cursor_row(), 0);
+        assert_eq!(ta.cursor_col(), 0);
     }
 }

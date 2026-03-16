@@ -39,12 +39,12 @@
 //!
 //! | Module | Description |
 //! |--------|-------------|
-//! | [`focus`] | [`FocusGroup`](focus::FocusGroup) for managing focus across multiple components |
+//! | [`focus`] | [`FocusGroup<N>`](focus::FocusGroup) — cycle keyboard focus across N components with Tab/Shift+Tab (see `examples/input_form.rs`) |
 //! | [`key`] | Key-binding helpers and constants |
 //! | [`overlay`] | Overlay positioning and rendering utilities |
 //! | [`runeutil`] | Unicode-aware string width and truncation utilities |
 //! | [`selection`] | [`SelectionState`](selection::SelectionState) for shared list navigation |
-//! | [`text_edit`] | [`TextEditState`](text_edit::TextEditState) for shared single-line text editing |
+//! | [`text_edit`] | **Deprecated** – [`TextEditState`](text_edit::TextEditState) for shared single-line text editing; use [`TextArea`](text_area::TextArea) with `.with_single_line(true)` instead |
 
 pub mod chrome;
 #[cfg(feature = "syntax-highlighting")]
@@ -54,6 +54,7 @@ pub mod dropdown;
 pub mod filepicker;
 pub mod focus;
 pub mod help;
+pub mod junctions;
 pub mod key;
 pub mod list;
 #[cfg(feature = "markdown")]

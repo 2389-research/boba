@@ -201,6 +201,7 @@ pub struct Program<M: Model> {
     filter: Option<Box<dyn Fn(M::Message) -> Option<M::Message> + Send>>,
     terminal_released: bool,
     log_file: Option<std::fs::File>,
+    post_render: Option<Box<dyn crate::post_render::PostRender>>,
 }
 
 impl<M: Model> Program<M> {
@@ -248,6 +249,7 @@ impl<M: Model> Program<M> {
             filter: None,
             terminal_released: false,
             log_file,
+            post_render: None,
         };
 
         program.debug_log("program initialized");
@@ -269,6 +271,12 @@ impl<M: Model> Program<M> {
         filter: impl Fn(M::Message) -> Option<M::Message> + Send + 'static,
     ) -> Self {
         self.filter = Some(Box::new(filter));
+        self
+    }
+
+    /// Set a post-render hook that runs after view() but before the buffer is flushed.
+    pub fn with_post_render(mut self, hook: impl crate::post_render::PostRender + 'static) -> Self {
+        self.post_render = Some(Box::new(hook));
         self
     }
 
@@ -582,8 +590,14 @@ impl<M: Model> Program<M> {
     }
 
     fn render(&mut self) -> Result<(), ProgramError> {
+        let model = &self.model;
+        let post_render = &self.post_render;
         self.terminal.draw(|frame| {
-            self.model.view(frame);
+            model.view(frame);
+            if let Some(hook) = post_render {
+                let area = frame.area();
+                hook.after_view(frame.buffer_mut(), area);
+            }
         })?;
         Ok(())
     }

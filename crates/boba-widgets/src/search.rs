@@ -1,3 +1,6 @@
+// ABOUTME: Search overlay component that composes a single-line TextArea with match navigation.
+// ABOUTME: Provides inline search bar with Ctrl+N/Ctrl+P navigation between matches.
+
 //! Search overlay component with match navigation.
 //!
 //! Provides an inline search bar that sits at the bottom of a content area,
@@ -27,7 +30,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::text_edit::TextEditState;
+use crate::text_area;
+use crate::text_area::TextArea;
 
 /// Messages emitted by the search component.
 #[derive(Debug, Clone)]
@@ -74,14 +78,26 @@ impl Default for SearchStyle {
     }
 }
 
+/// Strategy for matching search queries against content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MatchStrategy {
+    /// Case-insensitive substring match (default).
+    #[default]
+    CaseInsensitive,
+    /// Case-sensitive substring match.
+    CaseSensitive,
+}
+
 /// Inline search bar with match navigation.
 pub struct Search {
     active: bool,
-    editor: TextEditState,
+    editor: TextArea,
     matches: Vec<usize>,
     current_match: usize,
     style: SearchStyle,
     prompt_char: char,
+    content: Option<Vec<String>>,
+    match_strategy: MatchStrategy,
 }
 
 impl Default for Search {
@@ -95,11 +111,13 @@ impl Search {
     pub fn new() -> Self {
         Self {
             active: false,
-            editor: TextEditState::new(),
+            editor: TextArea::new().with_single_line(true),
             matches: Vec::new(),
             current_match: 0,
             style: SearchStyle::default(),
             prompt_char: '/',
+            content: None,
+            match_strategy: MatchStrategy::default(),
         }
     }
 
@@ -115,6 +133,20 @@ impl Search {
         self
     }
 
+    /// Set the match strategy (default: case-insensitive).
+    pub fn with_match_strategy(mut self, strategy: MatchStrategy) -> Self {
+        self.match_strategy = strategy;
+        self
+    }
+
+    /// Provide searchable content. When set, the search widget performs
+    /// matching internally on every query change instead of relying on
+    /// the parent to call `set_matches()`.
+    pub fn set_content(&mut self, content: Vec<String>) {
+        self.content = Some(content);
+        self.update_matches_from_content();
+    }
+
     /// Whether the search bar is currently active/visible.
     pub fn is_active(&self) -> bool {
         self.active
@@ -124,6 +156,7 @@ impl Search {
     pub fn activate(&mut self) {
         self.active = true;
         self.editor.reset();
+        self.editor.focus();
         self.matches.clear();
         self.current_match = 0;
     }
@@ -186,6 +219,36 @@ impl Search {
             }
         }
     }
+
+    /// Re-run matching against stored content using the current query.
+    fn update_matches_from_content(&mut self) {
+        if let Some(ref content) = self.content {
+            let query = self.editor.value();
+            if query.is_empty() {
+                self.matches.clear();
+                self.current_match = 0;
+                return;
+            }
+            let matches: Vec<usize> = match self.match_strategy {
+                MatchStrategy::CaseInsensitive => {
+                    let q = query.to_lowercase();
+                    content
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, s)| s.to_lowercase().contains(&q))
+                        .map(|(i, _)| i)
+                        .collect()
+                }
+                MatchStrategy::CaseSensitive => content
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.contains(&query))
+                    .map(|(i, _)| i)
+                    .collect(),
+            };
+            self.set_matches(matches);
+        }
+    }
 }
 
 impl Component for Search {
@@ -198,56 +261,52 @@ impl Component for Search {
                     return Command::none();
                 }
 
+                // Keys that Search intercepts before forwarding to the editor.
                 match (key.code, key.modifiers) {
                     (KeyCode::Esc, _) => {
                         self.deactivate();
-                        Command::message(Message::Dismissed)
+                        return Command::message(Message::Dismissed);
                     }
                     (KeyCode::Enter, _) => {
-                        if let Some(idx) = self.current_match_value() {
+                        return if let Some(idx) = self.current_match_value() {
                             Command::message(Message::JumpTo(idx))
                         } else {
                             Command::none()
-                        }
+                        };
                     }
                     (KeyCode::Char('n'), KeyModifiers::CONTROL) if !self.matches.is_empty() => {
                         self.next_match();
-                        if let Some(idx) = self.current_match_value() {
+                        return if let Some(idx) = self.current_match_value() {
                             Command::message(Message::JumpTo(idx))
                         } else {
                             Command::none()
-                        }
+                        };
                     }
                     (KeyCode::Char('p'), KeyModifiers::CONTROL) if !self.matches.is_empty() => {
                         self.prev_match();
-                        if let Some(idx) = self.current_match_value() {
+                        return if let Some(idx) = self.current_match_value() {
                             Command::message(Message::JumpTo(idx))
                         } else {
                             Command::none()
-                        }
+                        };
                     }
-                    (KeyCode::Backspace, _) => {
-                        if self.editor.is_empty() {
-                            self.deactivate();
-                            Command::message(Message::Dismissed)
-                        } else {
-                            self.editor.delete_back();
-                            Command::message(Message::QueryChanged(self.editor.value()))
-                        }
+                    (KeyCode::Backspace, _) if self.editor.is_empty() => {
+                        self.deactivate();
+                        return Command::message(Message::Dismissed);
                     }
-                    (KeyCode::Left, _) => {
-                        self.editor.move_left();
-                        Command::none()
-                    }
-                    (KeyCode::Right, _) => {
-                        self.editor.move_right();
-                        Command::none()
-                    }
-                    (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
-                        self.editor.insert_char(c);
-                        Command::message(Message::QueryChanged(self.editor.value()))
-                    }
-                    _ => Command::none(),
+                    _ => {}
+                }
+
+                // Forward all other keys to the TextArea editor.
+                let old_value = self.editor.value();
+                self.editor.update(text_area::Message::KeyPress(key));
+                let new_value = self.editor.value();
+
+                if new_value != old_value {
+                    self.update_matches_from_content();
+                    Command::message(Message::QueryChanged(new_value))
+                } else {
+                    Command::none()
                 }
             }
             Message::Activated => {
@@ -272,8 +331,8 @@ impl Component for Search {
         ));
 
         // Query text with cursor
-        let chars = self.editor.chars();
-        let cursor = self.editor.cursor();
+        let chars: Vec<char> = self.editor.value().chars().collect();
+        let cursor = self.editor.cursor_col();
         if chars.is_empty() {
             spans.push(Span::styled(" ", self.style.cursor));
         } else {
@@ -475,13 +534,13 @@ mod tests {
         search.update(Message::KeyPress(key(KeyCode::Char('f'))));
         search.update(Message::KeyPress(key(KeyCode::Char('é'))));
         assert_eq!(search.query(), "café");
-        assert_eq!(search.editor.cursor(), 4); // 4 chars
+        assert_eq!(search.editor.cursor_col(), 4); // 4 chars
 
         // Move left, then right
         search.update(Message::KeyPress(key(KeyCode::Left)));
-        assert_eq!(search.editor.cursor(), 3);
+        assert_eq!(search.editor.cursor_col(), 3);
         search.update(Message::KeyPress(key(KeyCode::Right)));
-        assert_eq!(search.editor.cursor(), 4);
+        assert_eq!(search.editor.cursor_col(), 4);
 
         // Backspace the 'é'
         search.update(Message::KeyPress(key(KeyCode::Backspace)));
@@ -495,5 +554,96 @@ mod tests {
         let cmd = search.update(Message::KeyPress(key(KeyCode::Char('a'))));
         assert!(cmd.is_none());
         assert!(search.query().is_empty());
+    }
+
+    #[test]
+    fn set_content_performs_matching() {
+        let mut search = Search::new();
+        search.set_content(vec![
+            "Apple".to_string(),
+            "banana".to_string(),
+            "CHERRY".to_string(),
+            "apricot".to_string(),
+        ]);
+        search.activate();
+        search.update(Message::KeyPress(key(KeyCode::Char('a'))));
+
+        // Default strategy is CaseInsensitive: matches "Apple", "banana", "apricot"
+        assert_eq!(search.match_count(), 3);
+        assert_eq!(search.matches(), &[0, 1, 3]);
+    }
+
+    #[test]
+    fn set_content_case_sensitive() {
+        let mut search = Search::new().with_match_strategy(MatchStrategy::CaseSensitive);
+        search.set_content(vec![
+            "Apple".to_string(),
+            "banana".to_string(),
+            "apricot".to_string(),
+        ]);
+        search.activate();
+        search.update(Message::KeyPress(key(KeyCode::Char('a'))));
+
+        // CaseSensitive: "banana" and "apricot" contain lowercase 'a'
+        assert_eq!(search.match_count(), 2);
+        assert_eq!(search.matches(), &[1, 2]);
+    }
+
+    #[test]
+    fn set_content_updates_matches_on_query_change() {
+        let mut search = Search::new();
+        search.set_content(vec![
+            "hello".to_string(),
+            "help".to_string(),
+            "world".to_string(),
+        ]);
+        search.activate();
+        search.update(Message::KeyPress(key(KeyCode::Char('h'))));
+        assert_eq!(search.match_count(), 2); // hello, help
+
+        search.update(Message::KeyPress(key(KeyCode::Char('e'))));
+        assert_eq!(search.match_count(), 2); // hello, help (both contain "he")
+
+        search.update(Message::KeyPress(key(KeyCode::Char('l'))));
+        search.update(Message::KeyPress(key(KeyCode::Char('l'))));
+        assert_eq!(search.match_count(), 1); // only "hello"
+    }
+
+    #[test]
+    fn empty_query_clears_matches_with_content() {
+        let mut search = Search::new();
+        search.set_content(vec!["apple".to_string(), "banana".to_string()]);
+        search.activate();
+        search.update(Message::KeyPress(key(KeyCode::Char('a'))));
+        assert_eq!(search.match_count(), 2);
+
+        // Backspace to empty
+        search.update(Message::KeyPress(key(KeyCode::Backspace)));
+        assert_eq!(search.match_count(), 0);
+    }
+
+    #[test]
+    fn set_content_rematches_active_query() {
+        let mut search = Search::new();
+        search.set_content(vec!["apple".to_string(), "banana".to_string()]);
+        search.activate();
+        search.update(Message::KeyPress(key(KeyCode::Char('a'))));
+        assert_eq!(search.match_count(), 2);
+
+        // Update content while query is active — should re-match immediately
+        search.set_content(vec!["apple".to_string(), "cherry".to_string()]);
+        assert_eq!(search.match_count(), 1);
+        assert_eq!(search.matches(), &[0]);
+    }
+
+    #[test]
+    fn external_set_matches_still_works_without_content() {
+        // When no content is set, Search behaves exactly as before:
+        // parent calls set_matches() manually.
+        let mut search = Search::new();
+        search.activate();
+        search.update(Message::KeyPress(key(KeyCode::Char('x'))));
+        search.set_matches(vec![0, 5, 10]);
+        assert_eq!(search.match_count(), 3);
     }
 }

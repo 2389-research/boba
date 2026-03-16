@@ -1,13 +1,20 @@
-//! Shared single-line text editing state.
+//! ABOUTME: Shared single-line text editing state (deprecated).
+//! ABOUTME: Prefer [`TextArea`](crate::text_area::TextArea) with `.with_single_line(true)` instead.
 //!
 //! `TextEditState` provides character buffer management, cursor movement,
 //! word-boundary navigation, kill operations, and undo/redo for single-line
-//! text editing. Used internally by [`TextInput`](crate::text_input::TextInput)
-//! and [`Search`](crate::search::Search).
+//! text editing.
+//!
+//! **Deprecated since 0.2.0**: Use [`TextArea`](crate::text_area::TextArea)
+//! with `.with_single_line(true)` instead.
 
 use std::collections::VecDeque;
 
 /// Single-line text editing state with undo/redo support.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use TextArea with .with_single_line(true) instead"
+)]
 pub struct TextEditState {
     chars: Vec<char>,
     cursor: usize,
@@ -15,6 +22,7 @@ pub struct TextEditState {
     redo_stack: VecDeque<(Vec<char>, usize)>,
 }
 
+#[allow(deprecated)]
 impl TextEditState {
     /// Create a new empty editing state.
     pub fn new() -> Self {
@@ -261,6 +269,7 @@ impl TextEditState {
     }
 }
 
+#[allow(deprecated)]
 impl Default for TextEditState {
     fn default() -> Self {
         Self::new()
@@ -268,6 +277,7 @@ impl Default for TextEditState {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

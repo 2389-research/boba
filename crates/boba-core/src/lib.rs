@@ -73,6 +73,7 @@ pub mod input_history;
 pub mod input_layer;
 pub mod key_sequence;
 pub mod model;
+pub mod post_render;
 pub mod quit;
 pub mod runtime;
 pub mod subscription;
@@ -86,6 +87,7 @@ pub use input_history::InputHistory;
 pub use input_layer::{InputLayer, LayeredModel};
 pub use key_sequence::KeySequenceTracker;
 pub use model::Model;
+pub use post_render::PostRender;
 pub use quit::QuitConfirmation;
 pub use runtime::{
     log_to_file, OutputTarget, Program, ProgramError, ProgramHandle, ProgramOptions,

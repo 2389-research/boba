@@ -1,3 +1,6 @@
+// ABOUTME: Scrollable content viewer with plain text, styled lines, and ANSI support.
+// ABOUTME: Features horizontal/vertical scroll, word wrap, mouse wheel, padding, and keyboard navigation.
+
 //! Scrollable content area with support for plain text, styled lines,
 //! ANSI escape sequences, mouse wheel scrolling, and horizontal scroll.
 
@@ -9,8 +12,12 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{
+    Block, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 use ratatui::Frame;
+
+use unicode_width::UnicodeWidthStr;
 
 use crate::runeutil;
 
@@ -154,8 +161,20 @@ pub struct Viewport {
     block: Option<Block<'static>>,
     mouse_wheel_enabled: bool,
     mouse_wheel_delta: u16,
+    /// When true, long lines are word-wrapped to fit the available width.
+    word_wrap: bool,
+    /// When true, follow mode is enabled (user preference).
+    follow: bool,
+    /// Tracks whether auto-scroll is currently active. Starts true when follow
+    /// is enabled. Set to false when the user scrolls away from the bottom,
+    /// re-enabled when they scroll back to the bottom.
+    follow_active: bool,
     /// Updated during each `view()` call via interior mutability.
     visible_height: Cell<u16>,
+    /// Updated during each `view()` call via interior mutability.
+    visible_width: Cell<u16>,
+    /// Inner padding between the border (or area edge) and content.
+    padding: Padding,
     key_seq: boba_core::key_sequence::KeySequenceTracker,
     key_bindings: ViewportKeyBindings,
 }
@@ -180,7 +199,12 @@ impl Viewport {
             block: None,
             mouse_wheel_enabled: true,
             mouse_wheel_delta: 3,
+            word_wrap: false,
+            follow: false,
+            follow_active: false,
+            padding: Padding::ZERO,
             visible_height: Cell::new(24),
+            visible_width: Cell::new(80),
             key_seq: boba_core::key_sequence::KeySequenceTracker::new(),
             key_bindings: ViewportKeyBindings::default(),
         }
@@ -201,19 +225,26 @@ impl Viewport {
     pub fn set_content(&mut self, content: impl Into<String>) {
         self.content = content.into();
         self.styled_content = None;
-        self.offset = 0;
+        if self.follow && self.follow_active {
+            self.offset = u16::MAX;
+        } else {
+            self.offset = 0;
+        }
         self.h_offset = 0;
     }
 
     /// Set pre-styled content lines directly.
     ///
-    /// Clears the plain string content and resets scroll offsets. The styled
-    /// content takes precedence over `content` when rendering.
+    /// Clears the plain string content. Preserves the current scroll offset
+    /// so that callers can update content without disrupting the user's
+    /// scroll position (e.g. during streaming). Use `goto_top()` or
+    /// `goto_bottom()` to explicitly reposition after setting content.
     pub fn set_styled_content(&mut self, lines: Vec<Line<'static>>) {
         self.styled_content = Some(lines);
         self.content.clear();
-        self.offset = 0;
-        self.h_offset = 0;
+        if self.follow && self.follow_active {
+            self.offset = u16::MAX;
+        }
     }
 
     /// Set content from a string containing ANSI escape sequences.
@@ -226,7 +257,11 @@ impl Viewport {
         let lines = runeutil::parse_ansi(&s);
         self.styled_content = Some(lines);
         self.content.clear();
-        self.offset = 0;
+        if self.follow && self.follow_active {
+            self.offset = u16::MAX;
+        } else {
+            self.offset = 0;
+        }
         self.h_offset = 0;
     }
 
@@ -245,6 +280,20 @@ impl Viewport {
         self
     }
 
+    /// Set inner padding between the border (or area edge) and content.
+    ///
+    /// Uses ratatui's `Padding` type. Content area shrinks by the padding
+    /// amounts on each side.
+    pub fn with_padding(mut self, top: u16, right: u16, bottom: u16, left: u16) -> Self {
+        self.padding = Padding::new(left, right, top, bottom);
+        self
+    }
+
+    /// Get the current padding configuration.
+    pub fn padding(&self) -> &Padding {
+        &self.padding
+    }
+
     /// Enable or disable mouse wheel scrolling.
     pub fn with_mouse_wheel(mut self, enabled: bool) -> Self {
         self.mouse_wheel_enabled = enabled;
@@ -255,6 +304,32 @@ impl Viewport {
     pub fn with_mouse_wheel_delta(mut self, delta: u16) -> Self {
         self.mouse_wheel_delta = delta;
         self
+    }
+
+    /// Enable word wrapping for long lines.
+    pub fn with_word_wrap(mut self, enabled: bool) -> Self {
+        self.word_wrap = enabled;
+        self
+    }
+
+    /// Enable follow mode: automatically scroll to the bottom whenever
+    /// content is updated, unless the user has scrolled away from the bottom.
+    ///
+    /// When follow is enabled, content updates auto-scroll to the bottom.
+    /// If the user scrolls up, auto-scroll pauses. When they scroll back
+    /// to the bottom, auto-scroll resumes.
+    pub fn with_follow(mut self, enabled: bool) -> Self {
+        self.follow = enabled;
+        self.follow_active = enabled;
+        self
+    }
+
+    /// Whether follow mode is currently auto-scrolling.
+    ///
+    /// Returns `true` when follow is enabled AND the user hasn't scrolled
+    /// away from the bottom. Useful for showing a "scroll locked" indicator.
+    pub fn is_following(&self) -> bool {
+        self.follow && self.follow_active
     }
 
     /// Give focus to the viewport, enabling keyboard scrolling.
@@ -302,8 +377,13 @@ impl Viewport {
     }
 
     /// Total number of lines in the content.
+    ///
+    /// When word wrapping is enabled, returns the number of visual lines
+    /// after wrapping rather than the raw line count.
     pub fn total_line_count(&self) -> usize {
-        if let Some(ref lines) = self.styled_content {
+        if self.word_wrap {
+            self.wrapped_line_count()
+        } else if let Some(ref lines) = self.styled_content {
             lines.len()
         } else {
             self.content.lines().count()
@@ -337,7 +417,9 @@ impl Viewport {
     // ---- Internal helpers ----
 
     fn total_lines(&self) -> u16 {
-        let count = if let Some(ref lines) = self.styled_content {
+        let count = if self.word_wrap {
+            self.wrapped_line_count()
+        } else if let Some(ref lines) = self.styled_content {
             lines.len()
         } else {
             self.content.lines().count()
@@ -346,6 +428,39 @@ impl Viewport {
             u16::MAX
         } else {
             count as u16
+        }
+    }
+
+    /// Count total visual lines after word wrapping.
+    fn wrapped_line_count(&self) -> usize {
+        let width = self.visible_width.get() as usize;
+        if width == 0 {
+            return 0;
+        }
+        if let Some(ref lines) = self.styled_content {
+            lines
+                .iter()
+                .map(|line| {
+                    let w = line.width();
+                    if w == 0 {
+                        1
+                    } else {
+                        w.div_ceil(width)
+                    }
+                })
+                .sum()
+        } else {
+            self.content
+                .lines()
+                .map(|line| {
+                    let w = UnicodeWidthStr::width(line);
+                    if w == 0 {
+                        1
+                    } else {
+                        w.div_ceil(width)
+                    }
+                })
+                .sum()
         }
     }
 
@@ -358,7 +473,13 @@ impl Component for Viewport {
     type Message = Message;
 
     fn update(&mut self, msg: Message) -> Command<Message> {
-        match msg {
+        // Normalize offset before any arithmetic — goto_bottom() uses u16::MAX
+        // which must be clamped to actual max before subtraction.
+        let max = self.max_offset(self.visible_height.get());
+        if self.offset > max {
+            self.offset = max;
+        }
+        let result = match msg {
             Message::KeyPress(key) if self.focus => {
                 // Check for gg sequence (vim go-to-top)
                 if key.code == KeyCode::Char('g') && key.modifiers == KeyModifiers::NONE {
@@ -366,42 +487,33 @@ impl Component for Viewport {
                         self.key_seq.completes_sequence(KeyCode::Char('g'))
                     {
                         self.offset = 0;
-                        return Command::none();
                     } else {
                         self.key_seq.set_pending(KeyCode::Char('g'));
                         return Command::none();
                     }
-                }
-                self.key_seq.clear();
-                if self.key_bindings.up.matches(&key) {
-                    self.offset = self.offset.saturating_sub(1);
-                    Command::none()
-                } else if self.key_bindings.down.matches(&key) {
-                    self.offset = self.offset.saturating_add(1);
-                    Command::none()
-                } else if self.key_bindings.left.matches(&key) {
-                    self.h_offset = self.h_offset.saturating_sub(1);
-                    Command::none()
-                } else if self.key_bindings.right.matches(&key) {
-                    self.h_offset = self.h_offset.saturating_add(1);
-                    Command::none()
-                } else if self.key_bindings.page_up.matches(&key) {
-                    let vh = self.visible_height.get();
-                    self.offset = self.offset.saturating_sub(vh);
-                    Command::none()
-                } else if self.key_bindings.page_down.matches(&key) {
-                    let vh = self.visible_height.get();
-                    self.offset = self.offset.saturating_add(vh);
-                    Command::none()
-                } else if self.key_bindings.first.matches(&key) {
-                    self.offset = 0;
-                    Command::none()
-                } else if self.key_bindings.last.matches(&key) {
-                    self.offset = u16::MAX; // Will be clamped in view
-                    Command::none()
                 } else {
-                    Command::none()
+                    self.key_seq.clear();
+                    if self.key_bindings.up.matches(&key) {
+                        self.offset = self.offset.saturating_sub(1);
+                    } else if self.key_bindings.down.matches(&key) {
+                        self.offset = self.offset.saturating_add(1);
+                    } else if self.key_bindings.left.matches(&key) {
+                        self.h_offset = self.h_offset.saturating_sub(1);
+                    } else if self.key_bindings.right.matches(&key) {
+                        self.h_offset = self.h_offset.saturating_add(1);
+                    } else if self.key_bindings.page_up.matches(&key) {
+                        let vh = self.visible_height.get();
+                        self.offset = self.offset.saturating_sub(vh);
+                    } else if self.key_bindings.page_down.matches(&key) {
+                        let vh = self.visible_height.get();
+                        self.offset = self.offset.saturating_add(vh);
+                    } else if self.key_bindings.first.matches(&key) {
+                        self.offset = 0;
+                    } else if self.key_bindings.last.matches(&key) {
+                        self.offset = u16::MAX; // Will be clamped in view
+                    }
                 }
+                Command::none()
             }
             Message::ScrollUp(n) => {
                 self.offset = self.offset.saturating_sub(n);
@@ -458,20 +570,39 @@ impl Component for Viewport {
                 Command::none()
             }
             _ => Command::none(),
+        };
+        // After any scroll action, update follow_active: if the user scrolled
+        // back to the bottom, re-enable auto-scroll; if they scrolled away,
+        // pause it.
+        if self.follow {
+            self.follow_active = self.at_bottom();
         }
+        result
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
-        let inner = if let Some(ref block) = self.block {
-            let inner = block.inner(area);
-            frame.render_widget(block.clone(), area);
-            inner
-        } else {
-            area
+        let inner = {
+            let r = if let Some(ref block) = self.block {
+                let r = block.inner(area);
+                frame.render_widget(block.clone(), area);
+                r
+            } else {
+                area
+            };
+            // Apply padding inside the block/area boundary.
+            let pad_w = self.padding.left.saturating_add(self.padding.right);
+            let pad_h = self.padding.top.saturating_add(self.padding.bottom);
+            Rect {
+                x: r.x.saturating_add(self.padding.left),
+                y: r.y.saturating_add(self.padding.top),
+                width: r.width.saturating_sub(pad_w),
+                height: r.height.saturating_sub(pad_h),
+            }
         };
 
-        // Update visible_height via interior mutability.
+        // Update visible dimensions via interior mutability.
         self.visible_height.set(inner.height);
+        self.visible_width.set(inner.width);
 
         let max = self.max_offset(inner.height);
         let offset = self.offset.min(max);
@@ -482,7 +613,10 @@ impl Component for Viewport {
             Text::raw(&self.content)
         };
 
-        let paragraph = Paragraph::new(text).scroll((offset, self.h_offset));
+        let mut paragraph = Paragraph::new(text).scroll((offset, self.h_offset));
+        if self.word_wrap {
+            paragraph = paragraph.wrap(ratatui::widgets::Wrap { trim: false });
+        }
 
         frame.render_widget(paragraph, inner);
 
@@ -496,5 +630,121 @@ impl Component for Viewport {
 
     fn focused(&self) -> bool {
         self.focus
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn padding_reduces_visible_area() {
+        let vp =
+            Viewport::new("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10")
+                .with_padding(1, 1, 1, 1);
+
+        // After setting padding, total_line_count is unchanged (content is the same)
+        assert_eq!(vp.total_line_count(), 10);
+
+        // The padding should be set
+        assert_eq!(vp.padding().top, 1);
+        assert_eq!(vp.padding().right, 1);
+        assert_eq!(vp.padding().bottom, 1);
+        assert_eq!(vp.padding().left, 1);
+    }
+
+    #[test]
+    fn follow_mode_scrolls_to_bottom_on_set_content() {
+        let mut vp = Viewport::new("line1").with_follow(true);
+        vp.set_content("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25");
+        // With follow mode active, offset should be set to bottom
+        assert_eq!(vp.y_offset(), u16::MAX);
+    }
+
+    #[test]
+    fn follow_mode_scrolls_to_bottom_on_set_styled_content() {
+        use ratatui::text::Line;
+        let mut vp = Viewport::new("").with_follow(true);
+        let lines: Vec<Line<'static>> = (0..30).map(|i| Line::raw(format!("line {i}"))).collect();
+        vp.set_styled_content(lines);
+        assert_eq!(vp.y_offset(), u16::MAX);
+    }
+
+    #[test]
+    fn follow_mode_scrolls_to_bottom_on_set_ansi_content() {
+        let mut vp = Viewport::new("").with_follow(true);
+        let content = (0..30)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        vp.set_ansi_content(content);
+        assert_eq!(vp.y_offset(), u16::MAX);
+    }
+
+    #[test]
+    fn no_follow_preserves_offset() {
+        let mut vp = Viewport::new("line1");
+        // Default: follow is false
+        vp.set_content("line1\nline2\nline3");
+        // set_content resets offset to 0
+        assert_eq!(vp.y_offset(), 0);
+    }
+
+    #[test]
+    fn follow_pauses_when_user_scrolls_up() {
+        let mut vp = Viewport::new("").with_follow(true);
+        assert!(vp.is_following());
+
+        // Give it enough content to scroll (more lines than visible_height)
+        let many_lines = (0..50)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        vp.set_content(&many_lines);
+        assert_eq!(vp.y_offset(), u16::MAX);
+
+        // User scrolls up — follow should pause
+        vp.update(Message::ScrollUp(5));
+        assert!(!vp.is_following());
+
+        // Content update should NOT auto-scroll now
+        let more_lines = (0..60)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        vp.set_content(&more_lines);
+        assert_eq!(vp.y_offset(), 0); // reset to 0, not MAX
+    }
+
+    #[test]
+    fn follow_resumes_when_user_scrolls_to_bottom() {
+        let mut vp = Viewport::new("").with_follow(true);
+        let many_lines = (0..50)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        vp.set_content(&many_lines);
+
+        // Scroll up to pause follow
+        vp.update(Message::ScrollUp(5));
+        assert!(!vp.is_following());
+
+        // Scroll back to bottom — follow should resume
+        vp.update(Message::ScrollToBottom);
+        assert!(vp.is_following());
+
+        // Content update should auto-scroll again
+        let more_lines = (0..60)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        vp.set_content(&more_lines);
+        assert_eq!(vp.y_offset(), u16::MAX);
+    }
+
+    #[test]
+    fn is_following_false_when_follow_disabled() {
+        let vp = Viewport::new("hello");
+        assert!(!vp.is_following());
     }
 }

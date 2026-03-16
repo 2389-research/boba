@@ -1,16 +1,21 @@
+// ABOUTME: Deprecated single-line text input component, now a thin wrapper around TextArea.
+// ABOUTME: Preserved for backward compatibility; use TextArea with .with_single_line(true) instead.
+
 //! Single-line text input component with autocomplete suggestions, validation,
 //! undo/redo, and multiple echo modes (normal, password, hidden).
+//!
+//! This module is deprecated. Use [`crate::text_area::TextArea`] with
+//! `.with_single_line(true)` for all new code.
 
 use boba_core::command::Command;
 use boba_core::component::Component;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Block;
 use ratatui::Frame;
 
-use crate::text_edit::TextEditState;
+use crate::text_area::{self, TextArea, TextAreaStyle};
 
 /// Controls how input text is displayed.
 #[derive(Debug, Clone, Default)]
@@ -66,6 +71,9 @@ pub enum Message {
 
 /// A single-line text input component.
 ///
+/// This is a thin wrapper around [`TextArea`] configured in single-line mode.
+/// All new code should use `TextArea` directly with `.with_single_line(true)`.
+///
 /// # Example
 ///
 /// ```ignore
@@ -82,47 +90,23 @@ pub enum Message {
 /// // In your parent component's view method, delegate rendering:
 /// // input.view(frame, area);
 /// ```
+#[deprecated(
+    since = "0.2.0",
+    note = "Use TextArea with .with_single_line(true) instead"
+)]
 pub struct TextInput {
-    editor: TextEditState,
-    offset: usize,
-    focus: bool,
-    placeholder: String,
-    prompt: String,
-    char_limit: Option<usize>,
-    echo_mode: EchoMode,
-    style: TextInputStyle,
-    #[allow(clippy::type_complexity)]
-    validate: Option<Box<dyn Fn(&str) -> Result<(), String> + Send>>,
-    err: Option<String>,
-    suggestions: Vec<String>,
-    filtered_suggestions: Vec<String>,
-    show_suggestions: bool,
-    suggestion_index: usize,
-    history: Option<boba_core::input_history::InputHistory>,
-    block: Option<Block<'static>>,
+    inner: TextArea,
 }
 
+#[allow(deprecated)]
 impl TextInput {
     /// Create a new text input with the given placeholder text.
     pub fn new(placeholder: impl Into<String>) -> Self {
-        Self {
-            editor: TextEditState::new(),
-            offset: 0,
-            focus: false,
-            placeholder: placeholder.into(),
-            prompt: String::new(),
-            char_limit: None,
-            echo_mode: EchoMode::default(),
-            style: TextInputStyle::default(),
-            validate: None,
-            err: None,
-            suggestions: Vec::new(),
-            filtered_suggestions: Vec::new(),
-            show_suggestions: true,
-            suggestion_index: 0,
-            history: None,
-            block: None,
-        }
+        let inner = TextArea::new()
+            .with_single_line(true)
+            .with_line_numbers(false)
+            .with_placeholder(placeholder);
+        Self { inner }
     }
 
     /// Enable input history with the given maximum number of entries.
@@ -130,7 +114,7 @@ impl TextInput {
     /// When enabled, Up/Down keys browse through previously submitted
     /// inputs (shell-like behavior).
     pub fn with_history(mut self, max_entries: usize) -> Self {
-        self.history = Some(boba_core::input_history::InputHistory::new(max_entries));
+        self.inner = self.inner.with_history(max_entries);
         self
     }
 
@@ -139,37 +123,35 @@ impl TextInput {
     /// Typically called after the user submits input. Empty strings
     /// and consecutive duplicates are ignored.
     pub fn push_history(&mut self, entry: impl Into<String>) {
-        if let Some(ref mut history) = self.history {
-            history.push(entry);
-        }
+        self.inner.push_history(entry);
     }
 
     /// Get a reference to the input history, if enabled.
     pub fn history(&self) -> Option<&boba_core::input_history::InputHistory> {
-        self.history.as_ref()
+        self.inner.history()
     }
 
     /// Set a prompt string displayed before the input (e.g., `> `).
     pub fn with_prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.prompt = prompt.into();
+        self.inner = self.inner.with_prompt(prompt);
         self
     }
 
     /// Set the echo mode (normal, password, or hidden).
     pub fn with_echo_mode(mut self, mode: EchoMode) -> Self {
-        self.echo_mode = mode;
+        self.inner = self.inner.with_echo_mode(convert_echo_mode(mode));
         self
     }
 
     /// Set the maximum number of characters allowed.
     pub fn with_char_limit(mut self, limit: usize) -> Self {
-        self.char_limit = Some(limit);
+        self.inner = self.inner.with_char_limit(limit);
         self
     }
 
     /// Set custom styles for the input.
     pub fn with_style(mut self, style: TextInputStyle) -> Self {
-        self.style = style;
+        self.inner = self.inner.with_style(convert_style(style));
         self
     }
 
@@ -178,7 +160,7 @@ impl TextInput {
     /// By default the input renders borderless. Use this method when you want
     /// the widget itself to draw a surrounding [`Block`].
     pub fn with_block(mut self, block: Block<'static>) -> Self {
-        self.block = Some(block);
+        self.inner = self.inner.with_block(block);
         self
     }
 
@@ -187,459 +169,203 @@ impl TextInput {
         mut self,
         f: impl Fn(&str) -> Result<(), String> + Send + 'static,
     ) -> Self {
-        self.validate = Some(Box::new(f));
+        self.inner = self.inner.with_validate(f);
         self
     }
 
     /// Set the list of autocomplete suggestions. Filtered automatically as the user types.
     pub fn set_suggestions(&mut self, suggestions: Vec<String>) {
-        self.suggestions = suggestions;
-        self.filter_suggestions();
+        self.inner.set_suggestions(suggestions);
     }
 
     /// Set autocomplete suggestions (builder variant).
     pub fn with_suggestions(mut self, suggestions: Vec<String>) -> Self {
-        self.suggestions = suggestions;
-        self.filter_suggestions();
+        self.inner = self.inner.with_suggestions(suggestions);
         self
     }
 
     /// Get the currently highlighted suggestion, if any.
     pub fn current_suggestion(&self) -> Option<&str> {
-        if !self.show_suggestions {
-            return None;
-        }
-        self.filtered_suggestions
-            .get(self.suggestion_index)
-            .map(|s| s.as_str())
+        self.inner.current_suggestion()
     }
 
     /// Get all suggestions matching the current input.
     pub fn available_suggestions(&self) -> &[String] {
-        &self.filtered_suggestions
+        self.inner.available_suggestions()
     }
 
     /// Enable or disable suggestion display.
     pub fn show_suggestions(&mut self, show: bool) {
-        self.show_suggestions = show;
+        self.inner.show_suggestions(show);
     }
 
     /// Give this input keyboard focus.
     pub fn focus(&mut self) {
-        self.focus = true;
+        self.inner.focus();
     }
 
     /// Remove keyboard focus.
     pub fn blur(&mut self) {
-        self.focus = false;
+        self.inner.blur();
     }
 
     /// Get the current input value as a String.
     pub fn value(&self) -> String {
-        self.editor.value()
+        self.inner.value()
     }
 
     /// Programmatically set the input value and move cursor to end.
     pub fn set_value(&mut self, value: &str) {
-        self.editor.set_value(value);
+        self.inner.set_value(value);
+        // TextInput historically moves cursor to end after set_value.
+        self.inner.set_cursor(value.len());
     }
 
     /// Programmatically set the cursor position.
     /// The position is clamped to `0..=value.len()`.
     pub fn set_cursor(&mut self, pos: usize) {
-        self.editor.set_cursor(pos);
+        self.inner.set_cursor(pos);
     }
 
     /// Clear the input value and reset cursor to position 0.
     pub fn reset(&mut self) {
-        self.editor.reset();
-        self.offset = 0;
+        self.inner.reset();
     }
 
     /// Move cursor to the start of the input.
     pub fn cursor_start(&mut self) {
-        self.editor.move_home();
+        self.inner.set_cursor(0);
     }
 
     /// Move cursor to the end of the input.
     pub fn cursor_end(&mut self) {
-        self.editor.move_end();
+        let len = self.inner.value().len();
+        self.inner.set_cursor(len);
     }
 
     /// Return the current cursor position (character index).
     pub fn cursor_position(&self) -> usize {
-        self.editor.cursor()
+        self.inner.cursor_position()
     }
 
     /// Return the current validation error, if any.
     pub fn err(&self) -> Option<&str> {
-        self.err.as_deref()
+        self.inner.err()
     }
 
     /// Whether the input value is empty.
     pub fn is_empty(&self) -> bool {
-        self.editor.is_empty()
+        self.inner.is_empty()
     }
 
     /// Return the number of characters in the input value.
     pub fn len(&self) -> usize {
-        self.editor.len()
+        self.inner.len()
     }
 
-    fn run_validate(&mut self) {
-        if let Some(ref validate) = self.validate {
-            let val = self.value();
-            match validate(&val) {
-                Ok(()) => self.err = None,
-                Err(e) => self.err = Some(e),
-            }
-        }
-    }
-
+    /// Return the display value based on the current echo mode.
+    #[cfg(test)]
     fn display_value(&self) -> String {
-        match &self.echo_mode {
-            EchoMode::Normal => self.editor.chars().iter().collect(),
-            EchoMode::Password(c) => c.to_string().repeat(self.editor.len()),
-            EchoMode::Hidden => String::new(),
+        match self.inner.echo_mode() {
+            text_area::EchoMode::Normal => self.inner.value(),
+            text_area::EchoMode::Password(c) => c.to_string().repeat(self.inner.len()),
+            text_area::EchoMode::Hidden => String::new(),
         }
     }
 
-    fn filter_suggestions(&mut self) {
-        let current: String = self.editor.chars().iter().collect();
-        let current_lower = current.to_lowercase();
-        self.filtered_suggestions = self
-            .suggestions
-            .iter()
-            .filter(|s| {
-                let s_lower = s.to_lowercase();
-                s_lower.starts_with(&current_lower) && s_lower != current_lower
-            })
-            .cloned()
-            .collect();
-        self.suggestion_index = 0;
-    }
-
-    fn accept_suggestion(&mut self) -> bool {
-        if let Some(suggestion) = self.current_suggestion().map(|s| s.to_owned()) {
-            self.editor.set_value(&suggestion);
-            self.filter_suggestions();
-            true
-        } else {
-            false
+    /// Translate a text_input key event, remapping readline bindings that
+    /// TextArea handles differently (Ctrl+A, Ctrl+E, Alt+B, Alt+F).
+    fn translate_key(key: KeyEvent) -> KeyEvent {
+        match (key.code, key.modifiers) {
+            // TextInput: Ctrl+A = move to start of line (readline Home)
+            // TextArea: Ctrl+A = select all
+            // Remap to Home key.
+            (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
+                KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)
+            }
+            // TextInput: Ctrl+E = move to end of line (readline End)
+            // TextArea has no Ctrl+E handler.
+            // Remap to End key.
+            (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
+                KeyEvent::new(KeyCode::End, KeyModifiers::NONE)
+            }
+            // TextInput: Alt+B = word left (readline)
+            // TextArea has no Alt+B handler; it uses Alt+Left.
+            (KeyCode::Char('b'), KeyModifiers::ALT) => {
+                KeyEvent::new(KeyCode::Left, KeyModifiers::ALT)
+            }
+            // TextInput: Alt+F = word right (readline)
+            // TextArea has no Alt+F handler; it uses Alt+Right.
+            (KeyCode::Char('f'), KeyModifiers::ALT) => {
+                KeyEvent::new(KeyCode::Right, KeyModifiers::ALT)
+            }
+            _ => key,
         }
     }
 }
 
+#[allow(deprecated)]
 impl Component for TextInput {
     type Message = Message;
 
     fn update(&mut self, msg: Message) -> Command<Message> {
-        match msg {
+        let inner_msg = match msg {
             Message::KeyPress(key) => {
-                if !self.focus {
-                    return Command::none();
-                }
-                let cmd = match (key.code, key.modifiers) {
-                    (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
-                        if let Some(limit) = self.char_limit {
-                            if self.editor.len() >= limit {
-                                return Command::none();
-                            }
-                        }
-                        self.editor.push_undo();
-                        self.editor.insert_char(c);
-                        self.filter_suggestions();
-                        Command::message(Message::Changed(self.value()))
-                    }
-                    (KeyCode::Backspace, KeyModifiers::NONE) => {
-                        self.editor.push_undo();
-                        let changed = self.editor.delete_back();
-                        self.filter_suggestions();
-                        if changed {
-                            Command::message(Message::Changed(self.value()))
-                        } else {
-                            Command::none()
-                        }
-                    }
-                    (KeyCode::Delete, KeyModifiers::NONE) => {
-                        self.editor.push_undo();
-                        let changed = self.editor.delete_forward();
-                        self.filter_suggestions();
-                        if changed {
-                            Command::message(Message::Changed(self.value()))
-                        } else {
-                            Command::none()
-                        }
-                    }
-                    (KeyCode::Backspace, m) if m.contains(KeyModifiers::ALT) => {
-                        self.editor.push_undo();
-                        let changed = self.editor.delete_word_back();
-                        self.filter_suggestions();
-                        if changed {
-                            Command::message(Message::Changed(self.value()))
-                        } else {
-                            Command::none()
-                        }
-                    }
-                    (KeyCode::Char('w'), m) if m.contains(KeyModifiers::CONTROL) => {
-                        self.editor.push_undo();
-                        let changed = self.editor.delete_word_back();
-                        self.filter_suggestions();
-                        if changed {
-                            Command::message(Message::Changed(self.value()))
-                        } else {
-                            Command::none()
-                        }
-                    }
-                    // Delete word forward: Alt+D or Ctrl+Delete
-                    (KeyCode::Char('d'), m) if m.contains(KeyModifiers::ALT) => {
-                        self.editor.push_undo();
-                        let changed = self.editor.delete_word_forward();
-                        self.filter_suggestions();
-                        if changed {
-                            Command::message(Message::Changed(self.value()))
-                        } else {
-                            Command::none()
-                        }
-                    }
-                    (KeyCode::Delete, m) if m.contains(KeyModifiers::CONTROL) => {
-                        self.editor.push_undo();
-                        let changed = self.editor.delete_word_forward();
-                        self.filter_suggestions();
-                        if changed {
-                            Command::message(Message::Changed(self.value()))
-                        } else {
-                            Command::none()
-                        }
-                    }
-                    (KeyCode::Tab, KeyModifiers::NONE) => {
-                        if self.current_suggestion().is_some() {
-                            self.editor.push_undo();
-                        }
-                        if self.accept_suggestion() {
-                            Command::message(Message::Changed(self.value()))
-                        } else {
-                            Command::none()
-                        }
-                    }
-                    (KeyCode::Left, KeyModifiers::NONE) => {
-                        self.editor.move_left();
-                        Command::none()
-                    }
-                    (KeyCode::Right, KeyModifiers::NONE) => {
-                        if self.editor.cursor() == self.editor.len()
-                            && self.current_suggestion().is_some()
-                        {
-                            self.editor.push_undo();
-                            self.accept_suggestion();
-                            Command::message(Message::Changed(self.value()))
-                        } else {
-                            self.editor.move_right();
-                            Command::none()
-                        }
-                    }
-                    // Word movement: Ctrl+Left/Right or Alt+Left/Right
-                    (KeyCode::Left, m)
-                        if m.contains(KeyModifiers::CONTROL) || m.contains(KeyModifiers::ALT) =>
-                    {
-                        self.editor.word_left();
-                        Command::none()
-                    }
-                    (KeyCode::Right, m)
-                        if m.contains(KeyModifiers::CONTROL) || m.contains(KeyModifiers::ALT) =>
-                    {
-                        self.editor.word_right();
-                        Command::none()
-                    }
-                    (KeyCode::Home, _) => {
-                        self.editor.move_home();
-                        Command::none()
-                    }
-                    (KeyCode::Char('a'), m) if m.contains(KeyModifiers::CONTROL) => {
-                        self.editor.move_home();
-                        Command::none()
-                    }
-                    (KeyCode::End, _) => {
-                        self.editor.move_end();
-                        Command::none()
-                    }
-                    (KeyCode::Char('e'), m) if m.contains(KeyModifiers::CONTROL) => {
-                        self.editor.move_end();
-                        Command::none()
-                    }
-                    (KeyCode::Char('u'), m) if m.contains(KeyModifiers::CONTROL) => {
-                        self.editor.push_undo();
-                        self.editor.kill_to_start();
-                        let cmd = Command::message(Message::Changed(self.value()));
-                        self.filter_suggestions();
-                        cmd
-                    }
-                    (KeyCode::Char('k'), m) if m.contains(KeyModifiers::CONTROL) => {
-                        self.editor.push_undo();
-                        self.editor.kill_to_end();
-                        let cmd = Command::message(Message::Changed(self.value()));
-                        self.filter_suggestions();
-                        cmd
-                    }
-                    (KeyCode::Char('z'), m) if m.contains(KeyModifiers::CONTROL) => {
-                        self.editor.undo();
-                        self.filter_suggestions();
-                        Command::none()
-                    }
-                    (KeyCode::Char('y'), m) if m.contains(KeyModifiers::CONTROL) => {
-                        self.editor.redo();
-                        self.filter_suggestions();
-                        Command::none()
-                    }
-                    (KeyCode::Up, KeyModifiers::NONE) => {
-                        if self.history.is_some() {
-                            let current = self.value();
-                            let entry = self
-                                .history
-                                .as_mut()
-                                .unwrap()
-                                .older(&current)
-                                .map(|s| s.to_owned());
-                            if let Some(entry) = entry {
-                                self.editor.set_value(&entry);
-                                self.filter_suggestions();
-                                return Command::message(Message::Changed(self.value()));
-                            }
-                        }
-                        Command::none()
-                    }
-                    (KeyCode::Down, KeyModifiers::NONE) => {
-                        if let Some(ref mut history) = self.history {
-                            if let Some(entry) = history.newer().map(|s| s.to_owned()) {
-                                self.editor.set_value(&entry);
-                                self.filter_suggestions();
-                                return Command::message(Message::Changed(self.value()));
-                            }
-                        }
-                        Command::none()
-                    }
-                    (KeyCode::Enter, _) => Command::message(Message::Submit(self.value())),
-                    _ => Command::none(),
-                };
-                self.run_validate();
-                cmd
+                let translated = Self::translate_key(key);
+                text_area::Message::KeyPress(translated)
             }
-            Message::Paste(text) => {
-                if !self.focus {
-                    return Command::none();
-                }
-                self.editor.push_undo();
-                let n = self.editor.insert_str(&text, self.char_limit);
-                self.filter_suggestions();
-                self.run_validate();
-                if n > 0 {
-                    Command::message(Message::Changed(self.value()))
-                } else {
-                    Command::none()
-                }
+            Message::Paste(s) => text_area::Message::Paste(s),
+            // Changed and Submit are output-only messages; no-op if received.
+            Message::Changed(_) | Message::Submit(_) => return Command::none(),
+        };
+
+        let cmd = self.inner.update(inner_msg);
+        // Map the returned Command from text_area::Message to text_input::Message.
+        cmd.map(|ta_msg| match ta_msg {
+            text_area::Message::Changed(s) => Message::Changed(s),
+            text_area::Message::Submit(s) => Message::Submit(s),
+            text_area::Message::KeyPress(k) => Message::KeyPress(k),
+            text_area::Message::Paste(s) => Message::Paste(s),
+            // TextInput never had Copy/Cut; drop them.
+            text_area::Message::Copy(_) | text_area::Message::Cut(_) => {
+                Message::Changed(String::new())
             }
-            Message::Changed(_) | Message::Submit(_) => Command::none(),
-        }
+        })
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
-        let display = self.display_value();
-
-        let inner = if let Some(ref block) = self.block {
-            let inner = block.inner(area);
-            frame.render_widget(block.clone(), area);
-            inner
-        } else {
-            area
-        };
-
-        // Calculate visible range with horizontal scrolling
-        let visible_width = inner.width as usize;
-        let prompt_len = self.prompt.len();
-        let available = visible_width.saturating_sub(prompt_len);
-
-        // Adjust offset so cursor is visible
-        let cursor = self.editor.cursor();
-        let offset = if cursor < self.offset {
-            cursor
-        } else if cursor >= self.offset + available {
-            cursor.saturating_sub(available) + 1
-        } else {
-            self.offset
-        };
-
-        let mut spans = Vec::new();
-
-        if !self.prompt.is_empty() {
-            spans.push(Span::styled(&self.prompt, self.style.prompt));
-        }
-
-        // Compute ghost text from the current suggestion (remaining part only).
-        let ghost_text: Option<String> = if self.show_suggestions {
-            if let Some(suggestion) = self.current_suggestion() {
-                let current_val = self.value();
-                if suggestion.len() > current_val.len() {
-                    Some(suggestion[current_val.len()..].to_string())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        if display.is_empty() && !self.focus {
-            spans.push(Span::styled(&self.placeholder, self.style.placeholder));
-        } else if display.is_empty() && self.focus {
-            // Show cursor on empty input
-            spans.push(Span::styled(" ", self.style.cursor));
-            // Show ghost text after cursor when input is empty
-            if let Some(ref ghost) = ghost_text {
-                spans.push(Span::styled(ghost.clone(), self.style.suggestion));
-            }
-        } else {
-            let chars: Vec<char> = display.chars().collect();
-            let visible_end = (offset + available).min(chars.len());
-            let visible: String = chars[offset..visible_end].iter().collect();
-
-            if self.focus {
-                let cursor_in_visible = cursor.saturating_sub(offset);
-                let before: String = visible.chars().take(cursor_in_visible).collect();
-                let cursor_char = visible.chars().nth(cursor_in_visible);
-                let after: String = visible.chars().skip(cursor_in_visible + 1).collect();
-
-                if !before.is_empty() {
-                    spans.push(Span::styled(before, self.style.text));
-                }
-                if let Some(c) = cursor_char {
-                    spans.push(Span::styled(c.to_string(), self.style.cursor));
-                } else {
-                    spans.push(Span::styled(" ", self.style.cursor));
-                    // Ghost text when cursor is at end of input
-                    if let Some(ref ghost) = ghost_text {
-                        spans.push(Span::styled(ghost.clone(), self.style.suggestion));
-                    }
-                }
-                if !after.is_empty() {
-                    spans.push(Span::styled(after, self.style.text));
-                }
-            } else {
-                spans.push(Span::styled(visible, self.style.text));
-            }
-        }
-
-        let paragraph = Paragraph::new(Line::from(spans));
-        frame.render_widget(paragraph, inner);
+        self.inner.view(frame, area);
     }
 
     fn focused(&self) -> bool {
-        self.focus
+        self.inner.focused()
+    }
+}
+
+/// Convert a text_input EchoMode to a text_area EchoMode.
+fn convert_echo_mode(mode: EchoMode) -> text_area::EchoMode {
+    match mode {
+        EchoMode::Normal => text_area::EchoMode::Normal,
+        EchoMode::Password(c) => text_area::EchoMode::Password(c),
+        EchoMode::Hidden => text_area::EchoMode::Hidden,
+    }
+}
+
+/// Convert a TextInputStyle to a TextAreaStyle.
+fn convert_style(style: TextInputStyle) -> TextAreaStyle {
+    TextAreaStyle {
+        text: style.text,
+        cursor: style.cursor,
+        line_number: Style::default().fg(Color::DarkGray),
+        selection: Style::default(),
+        prompt: style.prompt,
+        placeholder: style.placeholder,
+        suggestion: style.suggestion,
     }
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use boba_core::component::Component;
@@ -861,6 +587,22 @@ mod tests {
 
         // Alt+Right should move past "two" to end
         input.update(Message::KeyPress(key_alt(KeyCode::Right)));
+        assert_eq!(input.cursor_position(), 7);
+    }
+
+    #[test]
+    fn alt_b_f_readline_word_movement() {
+        let mut input = TextInput::new("");
+        input.focus();
+        input.set_value("one two");
+        assert_eq!(input.cursor_position(), 7);
+
+        // Alt+B should move to start of "two"
+        input.update(Message::KeyPress(key_alt(KeyCode::Char('b'))));
+        assert_eq!(input.cursor_position(), 4);
+
+        // Alt+F should move past "two" to end
+        input.update(Message::KeyPress(key_alt(KeyCode::Char('f'))));
         assert_eq!(input.cursor_position(), 7);
     }
 

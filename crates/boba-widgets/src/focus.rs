@@ -1,7 +1,38 @@
+// ABOUTME: Focus management utility for cycling keyboard focus across N components.
+// ABOUTME: Provides FocusGroup<N> with next/prev/direct focus and is_focused queries.
+
 //! Focus management utility for cycling keyboard focus across components.
 
 /// A utility to simplify the common pattern of routing keyboard input
 /// to the focused component. `N` is the number of focusable slots.
+///
+/// # Example
+///
+/// ```ignore
+/// use boba_widgets::focus::FocusGroup;
+///
+/// // Three focusable panes: sidebar, main content, detail panel
+/// let mut focus = FocusGroup::<3>::new();
+///
+/// // Tab to cycle focus
+/// focus.focus_next(); // now on slot 1 (main content)
+///
+/// // Route input based on focus
+/// match focus.focused() {
+///     0 => { /* send keys to sidebar */ }
+///     1 => { /* send keys to main content */ }
+///     2 => { /* send keys to detail panel */ }
+///     _ => unreachable!(),
+/// }
+///
+/// // Check specific slot
+/// if focus.is_focused(1) {
+///     // main content has focus
+/// }
+/// ```
+///
+/// See `examples/input_form.rs` for a complete working example with
+/// `FocusGroup` routing between two `TextArea` widgets and a submit button.
 pub struct FocusGroup<const N: usize> {
     focused: usize,
 }
