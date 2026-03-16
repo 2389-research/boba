@@ -61,6 +61,7 @@ impl Action {
         self
     }
 
+
     /// Set a case-sensitive shortcut key for this action.
     /// Use this when you need to distinguish 'a' from 'A'.
     pub fn with_shortcut_exact(mut self, key: char) -> Self {

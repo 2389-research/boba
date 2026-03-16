@@ -220,6 +220,7 @@ impl Search {
         }
     }
 
+
     /// Re-run matching against stored content using the current query.
     fn update_matches_from_content(&mut self) {
         if let Some(ref content) = self.content {
