@@ -1010,7 +1010,10 @@ impl TextArea {
         // Show placeholder text when empty and unfocused
         let is_empty = line_len == 0;
         if is_empty && !self.focus && !self.placeholder.is_empty() {
-            spans.push(Span::styled(self.placeholder.clone(), self.style.placeholder));
+            spans.push(Span::styled(
+                self.placeholder.clone(),
+                self.style.placeholder,
+            ));
             let paragraph = Paragraph::new(Line::from(spans));
             frame.render_widget(paragraph, inner);
             return;
@@ -2122,9 +2125,7 @@ mod tests {
 
     #[test]
     fn single_line_up_down_browse_history() {
-        let mut ta = TextArea::new()
-            .with_single_line(true)
-            .with_history(10);
+        let mut ta = TextArea::new().with_single_line(true).with_history(10);
         ta.focus();
         ta.push_history("first");
         ta.push_history("second");
@@ -2138,8 +2139,7 @@ mod tests {
 
     #[test]
     fn multiline_submit_with_ctrl_enter() {
-        let mut ta = TextArea::new()
-            .with_submit(SubmitBinding::CtrlEnter);
+        let mut ta = TextArea::new().with_submit(SubmitBinding::CtrlEnter);
         ta.focus();
         send_key(&mut ta, KeyCode::Char('h'), KeyModifiers::NONE);
         send_key(&mut ta, KeyCode::Char('i'), KeyModifiers::NONE);
@@ -2154,8 +2154,7 @@ mod tests {
 
     #[test]
     fn multiline_enter_submit_shift_enter_newline() {
-        let mut ta = TextArea::new()
-            .with_submit(SubmitBinding::Enter);
+        let mut ta = TextArea::new().with_submit(SubmitBinding::Enter);
         ta.focus();
         send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
         send_key(&mut ta, KeyCode::Enter, KeyModifiers::SHIFT);
@@ -2204,7 +2203,10 @@ mod tests {
         assert_eq!(ta.cursor_col(), 26);
         // After updating h_offset with a small available width, offset should advance
         ta.update_h_offset(10);
-        assert!(ta.h_offset() > 0, "h_offset should advance when cursor is past visible width");
+        assert!(
+            ta.h_offset() > 0,
+            "h_offset should advance when cursor is past visible width"
+        );
         // Cursor should be visible: h_offset <= cursor_col < h_offset + available
         assert!(ta.cursor_col() >= ta.h_offset());
         assert!(ta.cursor_col() < ta.h_offset() + 10);
@@ -2225,7 +2227,11 @@ mod tests {
         send_key(&mut ta, KeyCode::Home, KeyModifiers::NONE);
         assert_eq!(ta.cursor_col(), 0);
         ta.update_h_offset(10);
-        assert_eq!(ta.h_offset(), 0, "h_offset should track back to 0 when cursor is at start");
+        assert_eq!(
+            ta.h_offset(),
+            0,
+            "h_offset should track back to 0 when cursor is at start"
+        );
     }
 
     #[test]
@@ -2290,8 +2296,7 @@ mod tests {
 
     #[test]
     fn suggestions_ignored_in_multiline() {
-        let mut ta = TextArea::new()
-            .with_suggestions(vec!["apple".into()]);
+        let mut ta = TextArea::new().with_suggestions(vec!["apple".into()]);
         ta.focus();
         send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
         assert_eq!(ta.current_suggestion(), Option::<&str>::None);
@@ -2323,11 +2328,13 @@ mod tests {
 
     #[test]
     fn validation_sets_error() {
-        let mut ta = TextArea::new()
-            .with_single_line(true)
-            .with_validate(|s| {
-                if s.len() > 3 { Err("Too long".into()) } else { Ok(()) }
-            });
+        let mut ta = TextArea::new().with_single_line(true).with_validate(|s| {
+            if s.len() > 3 {
+                Err("Too long".into())
+            } else {
+                Ok(())
+            }
+        });
         ta.focus();
         send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
         assert!(ta.err().is_none());
@@ -2339,11 +2346,13 @@ mod tests {
 
     #[test]
     fn validation_clears_on_valid() {
-        let mut ta = TextArea::new()
-            .with_single_line(true)
-            .with_validate(|s| {
-                if s.is_empty() { Err("Required".into()) } else { Ok(()) }
-            });
+        let mut ta = TextArea::new().with_single_line(true).with_validate(|s| {
+            if s.is_empty() {
+                Err("Required".into())
+            } else {
+                Ok(())
+            }
+        });
         ta.focus();
         assert!(ta.err().is_none());
         send_key(&mut ta, KeyCode::Char('a'), KeyModifiers::NONE);
@@ -2356,9 +2365,7 @@ mod tests {
 
     #[test]
     fn visual_height_single_line() {
-        let ta = TextArea::new()
-            .with_single_line(true)
-            .with_content("hello");
+        let ta = TextArea::new().with_single_line(true).with_content("hello");
         assert_eq!(ta.visual_height(80), 1);
     }
 
@@ -2373,7 +2380,7 @@ mod tests {
         let ta = TextArea::new()
             .with_soft_wrap(true)
             .with_content("abcdefghij"); // 10 chars
-        // At width 5, wraps to 2 visual lines
+                                         // At width 5, wraps to 2 visual lines
         assert_eq!(ta.visual_height(5), 2);
     }
 

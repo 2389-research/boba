@@ -12,7 +12,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{
+    Block, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 use ratatui::Frame;
 
 use unicode_width::UnicodeWidthStr;
@@ -637,8 +639,9 @@ mod tests {
 
     #[test]
     fn padding_reduces_visible_area() {
-        let vp = Viewport::new("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10")
-            .with_padding(1, 1, 1, 1);
+        let vp =
+            Viewport::new("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10")
+                .with_padding(1, 1, 1, 1);
 
         // After setting padding, total_line_count is unchanged (content is the same)
         assert_eq!(vp.total_line_count(), 10);
@@ -670,7 +673,10 @@ mod tests {
     #[test]
     fn follow_mode_scrolls_to_bottom_on_set_ansi_content() {
         let mut vp = Viewport::new("").with_follow(true);
-        let content = (0..30).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let content = (0..30)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         vp.set_ansi_content(content);
         assert_eq!(vp.y_offset(), u16::MAX);
     }
@@ -690,7 +696,10 @@ mod tests {
         assert!(vp.is_following());
 
         // Give it enough content to scroll (more lines than visible_height)
-        let many_lines = (0..50).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let many_lines = (0..50)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         vp.set_content(&many_lines);
         assert_eq!(vp.y_offset(), u16::MAX);
 
@@ -699,7 +708,10 @@ mod tests {
         assert!(!vp.is_following());
 
         // Content update should NOT auto-scroll now
-        let more_lines = (0..60).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let more_lines = (0..60)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         vp.set_content(&more_lines);
         assert_eq!(vp.y_offset(), 0); // reset to 0, not MAX
     }
@@ -707,7 +719,10 @@ mod tests {
     #[test]
     fn follow_resumes_when_user_scrolls_to_bottom() {
         let mut vp = Viewport::new("").with_follow(true);
-        let many_lines = (0..50).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let many_lines = (0..50)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         vp.set_content(&many_lines);
 
         // Scroll up to pause follow
@@ -719,7 +734,10 @@ mod tests {
         assert!(vp.is_following());
 
         // Content update should auto-scroll again
-        let more_lines = (0..60).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let more_lines = (0..60)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         vp.set_content(&more_lines);
         assert_eq!(vp.y_offset(), u16::MAX);
     }

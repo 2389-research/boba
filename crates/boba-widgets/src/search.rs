@@ -220,7 +220,6 @@ impl Search {
         }
     }
 
-
     /// Re-run matching against stored content using the current query.
     fn update_matches_from_content(&mut self) {
         if let Some(ref content) = self.content {
@@ -240,14 +239,12 @@ impl Search {
                         .map(|(i, _)| i)
                         .collect()
                 }
-                MatchStrategy::CaseSensitive => {
-                    content
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, s)| s.contains(&query))
-                        .map(|(i, _)| i)
-                        .collect()
-                }
+                MatchStrategy::CaseSensitive => content
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.contains(&query))
+                    .map(|(i, _)| i)
+                    .collect(),
             };
             self.set_matches(matches);
         }
@@ -578,8 +575,7 @@ mod tests {
 
     #[test]
     fn set_content_case_sensitive() {
-        let mut search = Search::new()
-            .with_match_strategy(MatchStrategy::CaseSensitive);
+        let mut search = Search::new().with_match_strategy(MatchStrategy::CaseSensitive);
         search.set_content(vec![
             "Apple".to_string(),
             "banana".to_string(),

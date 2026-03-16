@@ -61,7 +61,6 @@ impl Action {
         self
     }
 
-
     /// Set a case-sensitive shortcut key for this action.
     /// Use this when you need to distinguish 'a' from 'A'.
     pub fn with_shortcut_exact(mut self, key: char) -> Self {
@@ -393,7 +392,11 @@ impl Component for Modal {
                         } else {
                             action.style.unwrap_or(self.style.action)
                         };
-                        let prefix = if i == self.focused_action { "▸ " } else { "  " };
+                        let prefix = if i == self.focused_action {
+                            "▸ "
+                        } else {
+                            "  "
+                        };
                         spans.push(Span::styled(prefix, style));
                         if let Some(ref label_spans) = action.label_spans {
                             if let Some(key) = action.shortcut {
@@ -455,8 +458,7 @@ impl Component for Modal {
                             } else {
                                 format!("{}{}", prefix, action.label)
                             };
-                            let action_paragraph =
-                                Paragraph::new(Span::styled(label, base_style));
+                            let action_paragraph = Paragraph::new(Span::styled(label, base_style));
                             frame.render_widget(action_paragraph, row_area);
                         }
                     }

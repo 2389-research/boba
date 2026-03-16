@@ -63,8 +63,9 @@ fn connections(ch: &str) -> (bool, bool, bool, bool) {
         "┥" | "┦" | "┧" | "┨" | "┩" | "┪" => (true, true, true, false),
         "┭" | "┮" | "┯" | "┰" | "┱" | "┲" => (false, true, true, true),
         "┵" | "┶" | "┷" | "┸" | "┹" | "┺" => (true, false, true, true),
-        "┽" | "┾" | "┿" | "╀" | "╁" | "╂" | "╃" | "╄" | "╅" | "╆" | "╇" | "╈" | "╉"
-        | "╊" => (true, true, true, true),
+        "┽" | "┾" | "┿" | "╀" | "╁" | "╂" | "╃" | "╄" | "╅" | "╆" | "╇" | "╈" | "╉" | "╊" => {
+            (true, true, true, true)
+        }
 
         // Mixed thin/double
         "╒" | "╓" => (false, true, false, true),

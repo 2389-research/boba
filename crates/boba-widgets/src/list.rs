@@ -803,7 +803,10 @@ impl<I: Item> Component for List<I> {
                         return Command::message(Message::Select(i));
                     }
                     Command::none()
-                } else if self.multi_select && key.code == KeyCode::Char(' ') && key.modifiers == KeyModifiers::NONE {
+                } else if self.multi_select
+                    && key.code == KeyCode::Char(' ')
+                    && key.modifiers == KeyModifiers::NONE
+                {
                     if let Some(original_idx) = self.selected() {
                         let toggled_on = if self.selected_set.contains(&original_idx) {
                             self.selected_set.remove(&original_idx);
@@ -1009,7 +1012,10 @@ mod tests {
 
         // Space toggles current item (index 0)
         let cmd = list.update(Message::KeyPress(key(KeyCode::Char(' '))));
-        assert!(matches!(cmd.into_message(), Some(Message::Toggled(0, true))));
+        assert!(matches!(
+            cmd.into_message(),
+            Some(Message::Toggled(0, true))
+        ));
         assert_eq!(list.selected_items(), &BTreeSet::from([0]));
 
         // Move down and toggle index 1
@@ -1020,7 +1026,10 @@ mod tests {
         // Toggle index 0 off — move back up and space
         list.update(Message::KeyPress(key(KeyCode::Up)));
         let cmd = list.update(Message::KeyPress(key(KeyCode::Char(' '))));
-        assert!(matches!(cmd.into_message(), Some(Message::Toggled(0, false))));
+        assert!(matches!(
+            cmd.into_message(),
+            Some(Message::Toggled(0, false))
+        ));
         assert_eq!(list.selected_items(), &BTreeSet::from([1]));
     }
 
@@ -1105,8 +1114,7 @@ mod tests {
 
     #[test]
     fn set_items_clears_selections() {
-        let mut list = List::new(vec!["a".to_string(), "b".to_string()])
-            .with_multi_select(true);
+        let mut list = List::new(vec!["a".to_string(), "b".to_string()]).with_multi_select(true);
         list.focus();
         list.update(Message::KeyPress(key(KeyCode::Char(' '))));
         assert_eq!(list.selected_items().len(), 1);

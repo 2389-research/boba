@@ -90,7 +90,10 @@ pub enum Message {
 /// // In your parent component's view method, delegate rendering:
 /// // input.view(frame, area);
 /// ```
-#[deprecated(since = "0.2.0", note = "Use TextArea with .with_single_line(true) instead")]
+#[deprecated(
+    since = "0.2.0",
+    note = "Use TextArea with .with_single_line(true) instead"
+)]
 pub struct TextInput {
     inner: TextArea,
 }
@@ -277,17 +280,25 @@ impl TextInput {
             // TextInput: Ctrl+A = move to start of line (readline Home)
             // TextArea: Ctrl+A = select all
             // Remap to Home key.
-            (KeyCode::Char('a'), KeyModifiers::CONTROL) => KeyEvent::new(KeyCode::Home, KeyModifiers::NONE),
+            (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
+                KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)
+            }
             // TextInput: Ctrl+E = move to end of line (readline End)
             // TextArea has no Ctrl+E handler.
             // Remap to End key.
-            (KeyCode::Char('e'), KeyModifiers::CONTROL) => KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+            (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
+                KeyEvent::new(KeyCode::End, KeyModifiers::NONE)
+            }
             // TextInput: Alt+B = word left (readline)
             // TextArea has no Alt+B handler; it uses Alt+Left.
-            (KeyCode::Char('b'), KeyModifiers::ALT) => KeyEvent::new(KeyCode::Left, KeyModifiers::ALT),
+            (KeyCode::Char('b'), KeyModifiers::ALT) => {
+                KeyEvent::new(KeyCode::Left, KeyModifiers::ALT)
+            }
             // TextInput: Alt+F = word right (readline)
             // TextArea has no Alt+F handler; it uses Alt+Right.
-            (KeyCode::Char('f'), KeyModifiers::ALT) => KeyEvent::new(KeyCode::Right, KeyModifiers::ALT),
+            (KeyCode::Char('f'), KeyModifiers::ALT) => {
+                KeyEvent::new(KeyCode::Right, KeyModifiers::ALT)
+            }
             _ => key,
         }
     }
