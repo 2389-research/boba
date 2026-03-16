@@ -15,6 +15,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Wrap};
 use ratatui::Frame;
 
+/// Validation callback type for input validation.
+type ValidateFn = Box<dyn Fn(&str) -> Result<(), String> + Send>;
+
 /// Controls which key combination triggers a submit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SubmitBinding {
@@ -106,7 +109,7 @@ pub struct TextArea {
     filtered_suggestions: Vec<String>,
     show_suggestions: bool,
     suggestion_index: usize,
-    validate: Option<Box<dyn Fn(&str) -> Result<(), String> + Send>>,
+    validate: Option<ValidateFn>,
     err: Option<String>,
     /// When set, caps the visible height used for rendering and scroll
     /// calculations. `visual_height()` also respects this limit.
@@ -1090,7 +1093,7 @@ impl Component for TextArea {
             Message::Paste(text) if self.focus => {
                 // In single-line mode, strip newlines from pasted text.
                 let text = if self.single_line {
-                    text.replace('\n', "").replace('\r', "")
+                    text.replace(['\n', '\r'], "")
                 } else {
                     text
                 };
