@@ -936,6 +936,32 @@ impl<I: Item> Component for List<I> {
                 let lines = self
                     .delegate
                     .render(&self.items[i], i, selected, list_area.width);
+                // In multi-select mode, prepend checkbox indicators to the first line
+                let lines = if self.multi_select {
+                    let check = if self.selected_set.contains(&i) {
+                        "[x] "
+                    } else {
+                        "[ ] "
+                    };
+                    lines
+                        .into_iter()
+                        .enumerate()
+                        .map(|(line_idx, line)| {
+                            if line_idx == 0 {
+                                let mut spans = vec![Span::raw(check)];
+                                spans.extend(line.spans);
+                                Line::from(spans)
+                            } else {
+                                // Indent continuation lines to align with checkbox text
+                                let mut spans = vec![Span::raw("    ")];
+                                spans.extend(line.spans);
+                                Line::from(spans)
+                            }
+                        })
+                        .collect()
+                } else {
+                    lines
+                };
                 ListItem::new(lines)
             })
             .collect();
